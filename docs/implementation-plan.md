@@ -46,6 +46,11 @@ Currently just `README.md` (a prior design doc for a different, more complex cus
 20. **Write `/docs/spec.md` (finalized) and `/docs/security-model.md`**: why the owner path is unconditional, why the recipient path must reject relative-flagged/mismatched-metric `since` values, exact boundary semantics at equality, and explicit non-goals (single recipient only, no off-chain notification, not audited) — matching the honesty of the current README's "Known limitations" section.
 21. **Rewrite the root `README.md`**: replace the superseded `BEGIN_OWNER_OP`/`PENDING_OWNER_OP` state-machine description with this finalized single-script mechanism, correct the References section (cite RFC 0017 accurately; drop RFC 0022/CoBuild references that no longer apply), and link the real testnet code_hash/tx_hash from steps 10–11.
 
+## Progress
+
+- **Step 1 — done.** On-chain data layout frozen in `docs/spec.md`.
+- **Step 2 — done.** Fraction-safe `since` comparison ported from verified `ckb-system-scripts` source and independently tested in both languages: `reference/since-cmp-rs` (Rust, `cargo test`, 11/11 passing, `no_std`-clean) and `reference/since-cmp-ts` (TypeScript, `node --test`, 11/11 passing). Testing surfaced a real gap not visible from the RFC text alone — the raw ported comparison doesn't normalize a degenerate `(index=0,length=0)` fraction, which would otherwise let a recipient claim early — now closed at the Tranfr policy layer (`recipient_path_eligible`/`recipientPathEligible`) and documented in `reference/README.md` and `docs/spec.md` §5/§7.
+
 ## Verification
 
 - Steps 4–9 are verified locally: `cargo test` under `ckb-testtool` must pass the full adversarial suite in step 9 before any testnet deployment.

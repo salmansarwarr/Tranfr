@@ -1,0 +1,10 @@
+[package]
+name = "since-cmp"
+version = "0.1.0"
+edition = "2021"
+description = "Reference port of ckb-system-scripts' check_since / epoch_number_with_fraction_cmp, plus Tranfr's recipient-path gate built on top of it."
+publish = false
+
+[lib]
+name = "since_cmp"
+path = "src/lib.rs"

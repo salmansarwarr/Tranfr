@@ -80,9 +80,11 @@ E1 > E2
 || (E1 == E2 && I1 * L2 >= I2 * L1)
 ```
 
-(cross-multiplication to compare `I1/L1 >= I2/L2` without floating point or division). This exact algorithm — not a reimplementation from memory — is the one to port from `ckb-system-scripts`' `check_since` (`common.h`) per step 2 of the implementation plan, and must be shared verbatim in spirit between the Rust script (`contracts/`) and the TypeScript SDK (`isRecoveryEligible`), so the two never silently disagree at a boundary epoch.
+(cross-multiplication to compare `I1/L1 >= I2/L2` without floating point or division). This exact algorithm has been ported and independently tested in both languages — see `/reference/since-cmp-rs` (Rust, `cargo test`, 11/11 passing) and `/reference/since-cmp-ts` (TypeScript, `node --test`, 11/11 passing) — rather than reimplemented separately from memory in the script and the SDK. Both import from that shared, verified module rather than each carrying their own copy.
 
 If `input_since.relative_flag != 0` or `input_since.metric != EPOCH_WITH_FRACTION`, the recipient path MUST reject outright — it must not fall back to any other comparison, since accepting a relative or differently-metric'd `since` would let a recipient construct a spend that consensus does not actually anchor to real elapsed time.
+
+**Confirmed by testing, not assumed:** the verbatim-ported comparison function does *not* itself normalize the degenerate `(index=0, length=0)` fraction to "start of epoch" as RFC 0017's prose implies — when the first operand has `length == 0`, its cross-multiplication term is always zero regardless of the second operand, so a raw, unnormalized `(epoch, 0, 0)` compares as equal to *every* fraction within that epoch, not just to `(epoch, 0, 1)`. Left unhandled, this would let a recipient claim early by crafting a degenerate `since` value. Both ports therefore normalize `(0,0) -> (0,1)` on **both** `input_since` and `deadline_since` immediately before comparing (see `normalize_epoch_fraction_value` / `normalizeEpochFractionValue`), rather than depending on whichever fraction happens to be spelled out. See `/reference/README.md` for the full writeup and reproduction.
 
 ## 6. Non-goals for this layout (v1)
 
@@ -90,6 +92,6 @@ If `input_since.relative_flag != 0` or `input_since.metric != EPOCH_WITH_FRACTIO
 - No on-chain distinction between "heartbeat" and "recipient change" — both are just an owner-path spend producing a new output with new args; the SDK layer (`renewTranfr`) is where that distinction exists, not the script.
 - No support for ordinary type-script assets beyond capacity in this layout description — if Tranfr later wraps SUDT or other type scripts, the `Type` field of the cell carries that independently of this lock's args and is unaffected by this spec.
 
-## 7. Open item carried to implementation
+## 7. Zero-index/zero-length normalization — resolved
 
-`epoch-with-fraction`'s exact zero-index/zero-length normalization (`I=0,L=1` when both are zero) must be verified against `ckb-std`'s own `Since` helper type at implementation time (step 5/7 of the plan) rather than assumed from this document — this spec states the RFC 0017 text's stated behavior, but the plan does not treat it as verified until read directly from the crate source being depended on.
+This was an open item pending verification; it is now closed. The `(index=0, length=0)` normalization is **not** something the verified upstream comparison code performs on its own (see §5's confirmed-by-testing note) — Tranfr's own gate (`recipient_path_eligible` / `recipientPathEligible`) performs it explicitly instead, on both sides of the comparison, before delegating to the ported algorithm. Remaining item for step 5/7: when the Rust module is embedded into the actual lock script crate, confirm `ckb-std`'s `load_input_since` returns the raw `since` u64 needed here rather than an already-decoded/reinterpreted type that would need different handling.
