@@ -50,6 +50,7 @@ Currently just `README.md` (a prior design doc for a different, more complex cus
 
 - **Step 1 — done.** On-chain data layout frozen in `docs/spec.md`.
 - **Step 2 — done.** Fraction-safe `since` comparison ported from verified `ckb-system-scripts` source and independently tested in both languages: `reference/since-cmp-rs` (Rust, `cargo test`, 11/11 passing, `no_std`-clean) and `reference/since-cmp-ts` (TypeScript, `node --test`, 11/11 passing). Testing surfaced a real gap not visible from the RFC text alone — the raw ported comparison doesn't normalize a degenerate `(index=0,length=0)` fraction, which would otherwise let a recipient claim early — now closed at the Tranfr policy layer (`recipient_path_eligible`/`recipientPathEligible`) and documented in `reference/README.md` and `docs/spec.md` §5/§7.
+- **Step 3 — done.** Live-queried both networks' public RPCs (`docs/epoch-length.md`) instead of assuming the nominal ~4h epoch figure: 40 real epoch transitions each gave 540 epochs/90 days on testnet, 539 on mainnet (within ~0.2% of each other). Recommendation recorded for later SDK steps: hardcode 540 as the default `durationEpochs`, but compute display-only "days remaining" from the *live* epoch length, not from that constant, since epoch wall-clock length is consensus-adjusted and drifts with network conditions rather than being fixed.
 
 ## Verification
 
