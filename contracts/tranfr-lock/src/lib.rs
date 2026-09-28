@@ -19,8 +19,15 @@ pub use main::{
 };
 #[cfg(feature = "library")]
 pub use main::{
-    ERR_ARGS_LEN, ERR_LOAD_SCRIPT, ERR_LOAD_WITNESS, ERR_OWNER_SIG, ERR_RECIPIENT_SIG,
-    ERR_RELATIVE_SINCE, ERR_SINCE_NOT_ELIGIBLE, ERR_UNKNOWN_MODE, ERR_WITNESS_LEN,
+    ERR_ARGS_LEN, ERR_CALCULATE_INPUTS, ERR_LOAD_SCRIPT, ERR_LOAD_TX_HASH, ERR_LOAD_WITNESS,
+    ERR_OWNER_SIG, ERR_RECIPIENT_SIG, ERR_RELATIVE_SINCE, ERR_SECP_PARSE_SIGNATURE,
+    ERR_SECP_RECOVER_PUBKEY, ERR_SIGHASH_WITNESS, ERR_SINCE_NOT_ELIGIBLE, ERR_UNKNOWN_MODE,
+    ERR_WITNESS_LEN,
 };
 #[cfg(feature = "library")]
 pub use main::{epoch_number_with_fraction_cmp, recipient_path_eligible, since_value_satisfied};
+#[cfg(feature = "library")]
+pub use main::{
+    compute_sighash_all_message, recover_lock_hash, verify_signature_matches_lock_hash,
+    SECP256K1_BLAKE160_SIGHASH_ALL_CODE_HASH,
+};

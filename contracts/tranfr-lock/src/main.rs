@@ -18,6 +18,18 @@ extern crate alloc;
 extern crate since_cmp;
 pub use since_cmp::{epoch_number_with_fraction_cmp, recipient_path_eligible, since_value_satisfied};
 
+// `#[path]` is resolved relative to this file's own directory (src/), not
+// its logical module path — needed because lib.rs's `mod main;` makes this
+// file a submodule (`main::crypto` would otherwise resolve to
+// src/main/crypto.rs, which doesn't exist) while the standalone on-chain
+// binary build treats this file as the crate root instead.
+#[path = "crypto.rs"]
+mod crypto;
+pub use crypto::{
+    compute_sighash_all_message, recover_lock_hash, verify_signature_matches_lock_hash,
+    SECP256K1_BLAKE160_SIGHASH_ALL_CODE_HASH,
+};
+
 use ckb_std::ckb_constants::Source;
 #[allow(unused_imports)]
 use ckb_std::ckb_types::prelude::*;
@@ -51,6 +63,16 @@ pub const ERR_RELATIVE_SINCE: i8 = 7;
 pub const ERR_SINCE_NOT_ELIGIBLE: i8 = 8;
 /// Failed to load the script args.
 pub const ERR_LOAD_SCRIPT: i8 = 9;
+/// Failed to load the transaction hash while building the sighash message.
+pub const ERR_LOAD_TX_HASH: i8 = 10;
+/// Failed to load or parse a witness while building the sighash message.
+pub const ERR_SIGHASH_WITNESS: i8 = 11;
+/// Failed while counting total input cells for the sighash message.
+pub const ERR_CALCULATE_INPUTS: i8 = 12;
+/// The 65-byte signature could not be parsed (bad r/s or recovery id).
+pub const ERR_SECP_PARSE_SIGNATURE: i8 = 13;
+/// Public key recovery failed (recovered point was the identity element).
+pub const ERR_SECP_RECOVER_PUBKEY: i8 = 14;
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 
@@ -152,19 +174,44 @@ pub fn load_and_parse_witness() -> Result<TranfrWitness, i8> {
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 pub fn program_entry() -> i8 {
-    let _args = match load_and_parse_args() {
+    let args = match load_and_parse_args() {
         Ok(args) => args,
         Err(err) => return err,
     };
 
-    let _witness = match load_and_parse_witness() {
+    let witness = match load_and_parse_witness() {
         Ok(witness) => witness,
         Err(err) => return err,
     };
 
-    // Step 5: Args and witness parsing complete and validated.
-    // Steps 6–8 will dispatch on mode and verify signature / check since.
-    0
+    match witness.mode {
+        // Step 6: OWNER path is unconditional — a valid signature against
+        // owner_lock_hash succeeds outright, no since check, ever.
+        UnlockMode::Owner => {
+            match verify_signature_matches_lock_hash(&witness.signature, &args.owner_lock_hash) {
+                Ok(true) => 0,
+                Ok(false) => ERR_OWNER_SIG,
+                Err(err) => err,
+            }
+        }
+        // RECIPIENT path shares the same signature machinery, but must
+        // additionally satisfy the since-eligibility gate before it can
+        // succeed — that gate is step 7. Verifying the signature here
+        // first is deliberate (it's genuinely shared, mode-agnostic
+        // machinery per docs/spec.md §3), but the path is intentionally
+        // left unable to fully succeed until step 7 wires in
+        // recipient_path_eligible, so an incomplete implementation can
+        // never be mistaken for a working (and exploitable) early-claim
+        // path in the meantime.
+        UnlockMode::Recipient => {
+            match verify_signature_matches_lock_hash(&witness.signature, &args.recipient_lock_hash)
+            {
+                Ok(true) => ERR_SINCE_NOT_ELIGIBLE, // TODO(step 7): real since check.
+                Ok(false) => ERR_RECIPIENT_SIG,
+                Err(err) => err,
+            }
+        }
+    }
 }
 
 #[cfg(test)]
