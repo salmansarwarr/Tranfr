@@ -133,6 +133,18 @@ fn build_signed_tx(
     signer: &SigningKey,
     input_since: u64,
 ) -> ckb_testtool::ckb_types::core::TransactionView {
+    build_signed_tx_multi(context, args, mode, signer, &[input_since])
+}
+
+/// Like `build_signed_tx` but with one input per entry of `input_sinces`,
+/// all sharing the same lock (one script group). Extra witnesses are empty.
+fn build_signed_tx_multi(
+    context: &mut Context,
+    args: Bytes,
+    mode: u8,
+    signer: &SigningKey,
+    input_sinces: &[u64],
+) -> ckb_testtool::ckb_types::core::TransactionView {
     let placeholder = |sig: [u8; 65]| {
         let mut lock = vec![mode];
         lock.extend_from_slice(&sig);
@@ -140,20 +152,23 @@ fn build_signed_tx(
     };
     let out_point = context.deploy_cell_by_name("tranfr-lock");
     let lock_script = context.build_script(&out_point, args).expect("script");
-    let input_out_point = context.create_cell(
-        CellOutput::new_builder()
-            .capacity(1000u64)
-            .lock(lock_script.clone())
-            .build(),
-        Bytes::new(),
-    );
-    let tx = TransactionBuilder::default()
-        .input(
+    let mut builder = TransactionBuilder::default();
+    for input_since in input_sinces {
+        let input_out_point = context.create_cell(
+            CellOutput::new_builder()
+                .capacity(1000u64)
+                .lock(lock_script.clone())
+                .build(),
+            Bytes::new(),
+        );
+        builder = builder.input(
             CellInput::new_builder()
                 .previous_output(input_out_point)
-                .since(Pack::<Uint64>::pack(&input_since))
+                .since(Pack::<Uint64>::pack(input_since))
                 .build(),
-        )
+        );
+    }
+    let tx = builder
         .output(
             CellOutput::new_builder()
                 .capacity(1000u64)
@@ -162,6 +177,7 @@ fn build_signed_tx(
         )
         .output_data(Bytes::new().pack())
         .witness(placeholder([0u8; 65]).pack())
+        .witnesses((1..input_sinces.len()).map(|_| Bytes::new().pack()))
         .build();
     let tx = context.complete_tx(tx);
 
@@ -172,6 +188,9 @@ fn build_signed_tx(
     hasher.update(tx.hash().as_slice());
     hasher.update(&(zeroed.len() as u64).to_le_bytes());
     hasher.update(&zeroed);
+    for _ in 1..input_sinces.len() {
+        hasher.update(&0u64.to_le_bytes()); // empty extra group witnesses
+    }
     let mut message = [0u8; 32];
     hasher.finalize(&mut message);
 
@@ -180,7 +199,11 @@ fn build_signed_tx(
     sig_bytes[0..64].copy_from_slice(&sig.to_bytes());
     sig_bytes[64] = recid.to_byte();
     tx.as_advanced_builder()
-        .set_witnesses(vec![placeholder(sig_bytes).pack()])
+        .set_witnesses(
+            std::iter::once(placeholder(sig_bytes).pack())
+                .chain((1..input_sinces.len()).map(|_| Bytes::new().pack()))
+                .collect(),
+        )
         .build()
 }
 
@@ -370,4 +393,31 @@ fn test_reject_unknown_mode_byte() {
     );
     let err = context.verify_tx(&tx, 10_000_000).unwrap_err();
     assert_error_code(&err, ERR_UNKNOWN_MODE);
+}
+
+#[test]
+fn test_recipient_checks_every_input_in_the_group() {
+    let (owner, recipient) = (key(1), key(2));
+    let deadline = since(ABS_EPOCH, 100, 1, 4);
+    let mature = since(ABS_EPOCH, 101, 0, 1);
+    let early = since(ABS_EPOCH, 99, 0, 1);
+
+    // Mature first input must not shield an unmatured second one, in either order.
+    for sinces in [[mature, 0], [mature, early], [early, mature]] {
+        let mut context = Context::default();
+        let args = args_for(&owner, &recipient, deadline);
+        let tx = build_signed_tx_multi(&mut context, args, 0x01, &recipient, &sinces);
+        assert_error_code(&verify(&context, &tx).unwrap_err(), ERR_SINCE_NOT_ELIGIBLE);
+    }
+    // A relative since on a later input is rejected too.
+    let mut context = Context::default();
+    let args = args_for(&owner, &recipient, deadline);
+    let tx = build_signed_tx_multi(&mut context, args, 0x01, &recipient, &[mature, since(REL_EPOCH, 999, 0, 1)]);
+    assert_error_code(&verify(&context, &tx).unwrap_err(), ERR_RELATIVE_SINCE);
+
+    // All inputs mature: succeeds.
+    let mut context = Context::default();
+    let args = args_for(&owner, &recipient, deadline);
+    let tx = build_signed_tx_multi(&mut context, args, 0x01, &recipient, &[mature, deadline, mature]);
+    verify(&context, &tx).expect("all-mature group should pass");
 }

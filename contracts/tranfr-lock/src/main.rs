@@ -31,6 +31,7 @@ pub use crypto::{
 };
 
 use ckb_std::ckb_constants::Source;
+use ckb_std::error::SysError;
 #[allow(unused_imports)]
 use ckb_std::ckb_types::prelude::*;
 use ckb_std::high_level::{load_input_since, load_script, load_witness_args};
@@ -193,10 +194,21 @@ pub fn check_recipient_since(input_since: u64, deadline_since: u64) -> Result<()
     }
 }
 
-/// Loads this group's first input's raw `since` and applies the gate.
+/// Applies the gate to EVERY input in this script group, not just the
+/// first. The script runs once per group of inputs sharing this lock, and
+/// consensus enforces each input's own `since` independently — so checking
+/// only input 0 would let a recipient pair a mature input with a second,
+/// unmatured cell (identical lock => identical deadline) and claim it early.
 fn verify_recipient_since(args: &TranfrArgs) -> Result<(), i8> {
-    let input_since = load_input_since(0, Source::GroupInput).map_err(|_| ERR_LOAD_SINCE)?;
-    check_recipient_since(input_since, args.deadline_since)
+    let mut i = 0usize;
+    loop {
+        match load_input_since(i, Source::GroupInput) {
+            Ok(input_since) => check_recipient_since(input_since, args.deadline_since)?,
+            Err(SysError::IndexOutOfBound) => return Ok(()),
+            Err(_) => return Err(ERR_LOAD_SINCE),
+        }
+        i += 1;
+    }
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
