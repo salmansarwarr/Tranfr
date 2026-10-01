@@ -421,3 +421,223 @@ fn test_recipient_checks_every_input_in_the_group() {
     let tx = build_signed_tx_multi(&mut context, args, 0x01, &recipient, &[mature, deadline, mature]);
     verify(&context, &tx).expect("all-mature group should pass");
 }
+
+// ── Step 9: adversarial suite ────────────────────────────────────────────────
+
+type Tx = ckb_testtool::ckb_types::core::TransactionView;
+
+/// Replaces the first witness's 66-byte lock field, leaving the tx hash intact.
+fn with_lock(tx: &Tx, lock: Vec<u8>) -> Tx {
+    tx.as_advanced_builder()
+        .set_witnesses(vec![make_witness(Some(Bytes::from(lock))).pack()])
+        .build()
+}
+
+fn lock_of(tx: &Tx) -> Vec<u8> {
+    let w = WitnessArgs::from_slice(&tx.witnesses().get(0).unwrap().raw_data()).unwrap();
+    w.lock().to_opt().unwrap().raw_data().to_vec()
+}
+
+#[test]
+fn adv_owner_succeeds_before_at_and_after_deadline_and_with_any_since() {
+    let (owner, recipient) = (key(1), key(2));
+    let deadline = since(ABS_EPOCH, 100, 1, 4);
+    for input_since in [
+        0,
+        since(ABS_EPOCH, 50, 0, 1),  // well before
+        deadline,                    // exactly at
+        since(ABS_EPOCH, 500, 0, 1), // well after
+        since(REL_EPOCH, 5, 0, 1),   // relative: irrelevant on owner path
+        since(0x00, 7, 0, 0),        // block-number metric: irrelevant
+    ] {
+        let mut context = Context::default();
+        let tx = build_signed_tx(&mut context, args_for(&owner, &recipient, deadline), 0x00, &owner, input_since);
+        verify(&context, &tx).unwrap_or_else(|e| panic!("owner since {input_since:#x}: {e}"));
+    }
+}
+
+#[test]
+fn adv_owner_succeeds_even_with_malformed_deadline() {
+    // The owner path must be unconditional: a garbage deadline can never lock the owner out.
+    let (owner, recipient) = (key(1), key(2));
+    for bad in [0u64, u64::MAX, since(REL_EPOCH, 1, 0, 1), since(0x00, 1, 0, 0)] {
+        let mut context = Context::default();
+        let tx = build_signed_tx(&mut context, args_for(&owner, &recipient, bad), 0x00, &owner, 0);
+        verify(&context, &tx).unwrap_or_else(|e| panic!("deadline {bad:#x}: {e}"));
+    }
+}
+
+#[test]
+fn adv_boundary_fraction_edge_cases() {
+    let (owner, recipient) = (key(1), key(2));
+    // (deadline, input_since, should_pass)
+    let cases = [
+        // different denominators, equal ratio
+        (since(ABS_EPOCH, 10, 1, 3), since(ABS_EPOCH, 10, 2, 6), true),
+        // just below / just above with different denominators (1/3 vs 332/1000, 334/1000)
+        (since(ABS_EPOCH, 10, 1, 3), since(ABS_EPOCH, 10, 332, 1000), false),
+        (since(ABS_EPOCH, 10, 1, 3), since(ABS_EPOCH, 10, 334, 1000), true),
+        // large denominators near the 16-bit limit
+        (since(ABS_EPOCH, 10, 65534, 65535), since(ABS_EPOCH, 10, 65533, 65535), false),
+        (since(ABS_EPOCH, 10, 65534, 65535), since(ABS_EPOCH, 10, 65534, 65535), true),
+        // fraction ignored once the epoch is strictly later / earlier
+        (since(ABS_EPOCH, 10, 3, 4), since(ABS_EPOCH, 11, 0, 1), true),
+        (since(ABS_EPOCH, 10, 0, 1), since(ABS_EPOCH, 9, 4095, 4096), false),
+        // start-of-epoch deadline: degenerate (0,0) spellings are equivalent to (0,1)
+        (since(ABS_EPOCH, 10, 0, 0), since(ABS_EPOCH, 10, 0, 1), true),
+        (since(ABS_EPOCH, 10, 0, 1), since(ABS_EPOCH, 10, 0, 0), true),
+        (since(ABS_EPOCH, 10, 0, 0), since(ABS_EPOCH, 9, 0, 0), false),
+        // epoch 0 and maximum 24-bit epoch
+        (since(ABS_EPOCH, 0, 0, 1), since(ABS_EPOCH, 0, 0, 1), true),
+        (since(ABS_EPOCH, 0xff_ffff, 0, 1), since(ABS_EPOCH, 0xff_fffe, 65535, 65535), false),
+        (since(ABS_EPOCH, 0xff_ffff, 0, 1), since(ABS_EPOCH, 0xff_ffff, 0, 1), true),
+    ];
+    for (deadline, input_since, should_pass) in cases {
+        let mut context = Context::default();
+        let tx = build_signed_tx(&mut context, args_for(&owner, &recipient, deadline), 0x01, &recipient, input_since);
+        let r = verify(&context, &tx);
+        if should_pass {
+            r.unwrap_or_else(|e| panic!("deadline {deadline:#x} since {input_since:#x} should pass: {e}"));
+        } else {
+            assert_error_code(&r.unwrap_err(), ERR_SINCE_NOT_ELIGIBLE);
+        }
+    }
+}
+
+#[test]
+fn adv_mode_byte_cannot_steal_the_other_paths_signature() {
+    let (owner, recipient) = (key(1), key(2));
+    let deadline = since(ABS_EPOCH, 100, 1, 4);
+    let mature = since(ABS_EPOCH, 500, 0, 1);
+
+    // Recipient's signature, mode flipped to OWNER (the mode byte is not signed).
+    let mut context = Context::default();
+    let tx = build_signed_tx(&mut context, args_for(&owner, &recipient, deadline), 0x01, &recipient, mature);
+    let mut lock = lock_of(&tx);
+    lock[0] = 0x00;
+    assert_error_code(&verify(&context, &with_lock(&tx, lock)).unwrap_err(), ERR_OWNER_SIG);
+
+    // Owner's signature, mode flipped to RECIPIENT — even with a mature since.
+    let mut context = Context::default();
+    let tx = build_signed_tx(&mut context, args_for(&owner, &recipient, deadline), 0x00, &owner, mature);
+    let mut lock = lock_of(&tx);
+    lock[0] = 0x01;
+    assert_error_code(&verify(&context, &with_lock(&tx, lock)).unwrap_err(), ERR_RECIPIENT_SIG);
+
+    // Recipient cannot take the owner path by signing as themselves.
+    let mut context = Context::default();
+    let tx = build_signed_tx(&mut context, args_for(&owner, &recipient, deadline), 0x00, &recipient, 0);
+    assert_error_code(&verify(&context, &tx).unwrap_err(), ERR_OWNER_SIG);
+
+    // A stranger can do neither.
+    let stranger = key(3);
+    for mode in [0x00u8, 0x01] {
+        let mut context = Context::default();
+        let tx = build_signed_tx(&mut context, args_for(&owner, &recipient, deadline), mode, &stranger, mature);
+        let want = if mode == 0 { ERR_OWNER_SIG } else { ERR_RECIPIENT_SIG };
+        assert_error_code(&verify(&context, &tx).unwrap_err(), want);
+    }
+}
+
+#[test]
+fn adv_owner_equals_recipient_still_gated_on_recipient_path() {
+    // Same key in both roles: the owner path is unconditional, the recipient path still gated.
+    let k = key(1);
+    let deadline = since(ABS_EPOCH, 100, 1, 4);
+    let mut context = Context::default();
+    let tx = build_signed_tx(&mut context, args_for(&k, &k, deadline), 0x00, &k, 0);
+    verify(&context, &tx).expect("owner mode passes");
+    let mut context = Context::default();
+    let tx = build_signed_tx(&mut context, args_for(&k, &k, deadline), 0x01, &k, 0);
+    assert_error_code(&verify(&context, &tx).unwrap_err(), ERR_SINCE_NOT_ELIGIBLE);
+}
+
+#[test]
+fn adv_tampered_or_malformed_signatures_fail_cleanly() {
+    let (owner, recipient) = (key(1), key(2));
+    let deadline = since(ABS_EPOCH, 100, 1, 4);
+    let mature = since(ABS_EPOCH, 500, 0, 1);
+    for (mode, signer) in [(0x00u8, &owner), (0x01u8, &recipient)] {
+        let mut context = Context::default();
+        let tx = build_signed_tx(&mut context, args_for(&owner, &recipient, deadline), mode, signer, mature);
+        let good = lock_of(&tx);
+        verify(&context, &tx).expect("untampered baseline passes");
+
+        let mut cases: Vec<Vec<u8>> = Vec::new();
+        for pos in [1usize, 33, 64] {
+            let mut l = good.clone();
+            l[pos] ^= 0x01; // flip a bit in r, s
+            cases.push(l);
+        }
+        let mut l = good.clone();
+        l[1..66].fill(0); // all-zero signature
+        cases.push(l);
+        let mut l = good.clone();
+        l[65] = 4; // recovery id out of range
+        cases.push(l);
+        let mut l = good.clone();
+        l[65] ^= 1; // flipped recovery id -> different/invalid pubkey
+        cases.push(l);
+
+        for l in cases {
+            // Must fail (any non-zero error code), never succeed or panic.
+            let err = verify(&context, &with_lock(&tx, l)).unwrap_err();
+            assert!(err.to_string().contains("error code"), "unexpected failure kind: {err}");
+        }
+    }
+}
+
+#[test]
+fn adv_signature_is_bound_to_the_transaction() {
+    // Replaying a valid witness on a tx with a different output must fail.
+    let (owner, recipient) = (key(1), key(2));
+    let deadline = since(ABS_EPOCH, 100, 1, 4);
+    let mature = since(ABS_EPOCH, 500, 0, 1);
+    for (mode, signer, want) in [(0x00u8, &owner, ERR_OWNER_SIG), (0x01u8, &recipient, ERR_RECIPIENT_SIG)] {
+        let mut context = Context::default();
+        let tx = build_signed_tx(&mut context, args_for(&owner, &recipient, deadline), mode, signer, mature);
+        let first_output = tx.outputs().get(0).unwrap();
+        let redirected = tx
+            .as_advanced_builder()
+            .set_outputs(vec![first_output.as_builder().capacity(999u64).build()])
+            .build();
+        assert_error_code(&verify(&context, &redirected).unwrap_err(), want);
+    }
+}
+
+#[test]
+fn adv_extra_group_witnesses_are_signed_over() {
+    // Altering a later group witness after signing invalidates the signature.
+    let (owner, recipient) = (key(1), key(2));
+    let deadline = since(ABS_EPOCH, 100, 1, 4);
+    let mature = since(ABS_EPOCH, 500, 0, 1);
+    let mut context = Context::default();
+    let tx = build_signed_tx_multi(&mut context, args_for(&owner, &recipient, deadline), 0x01, &recipient, &[mature, mature]);
+    verify(&context, &tx).expect("baseline passes");
+    let mut ws: Vec<_> = tx.witnesses().into_iter().collect();
+    ws[1] = Bytes::from_static(b"tamper").pack();
+    let tampered = tx.as_advanced_builder().set_witnesses(ws).build();
+    assert_error_code(&verify(&context, &tampered).unwrap_err(), ERR_RECIPIENT_SIG);
+}
+
+#[test]
+fn adv_malformed_witness_and_args_never_succeed() {
+    let (owner, recipient) = (key(1), key(2));
+    let deadline = since(ABS_EPOCH, 100, 1, 4);
+    let mature = since(ABS_EPOCH, 500, 0, 1);
+    let mut context = Context::default();
+    let tx = build_signed_tx(&mut context, args_for(&owner, &recipient, deadline), 0x01, &recipient, mature);
+    // Truncated / garbage witness bytes (not even valid WitnessArgs molecule).
+    for garbage in [vec![], vec![0xff; 3], vec![0u8; 100]] {
+        let bad = tx
+            .as_advanced_builder()
+            .set_witnesses(vec![Bytes::from(garbage).pack()])
+            .build();
+        let err = verify(&context, &bad).unwrap_err();
+        assert!(err.to_string().contains("error code"), "{err}");
+    }
+    // Empty args.
+    let mut context = Context::default();
+    let tx = build_signed_tx(&mut context, Bytes::new(), 0x00, &owner, 0);
+    assert_error_code(&verify(&context, &tx).unwrap_err(), ERR_ARGS_LEN);
+}
