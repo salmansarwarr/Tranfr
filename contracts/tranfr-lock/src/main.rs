@@ -1,4 +1,4 @@
-// Tranfr lock script — step 5: args and witness parsing.
+// Tranfr lock script — args/witness parsing, OWNER/RECIPIENT paths (steps 5–7).
 //
 // This file implements fixed-width hand-rolled parsing of:
 //   1. Script args (72 bytes: owner_lock_hash (32B) + recipient_lock_hash (32B) + deadline_since (8B, LE u64))
@@ -33,7 +33,7 @@ pub use crypto::{
 use ckb_std::ckb_constants::Source;
 #[allow(unused_imports)]
 use ckb_std::ckb_types::prelude::*;
-use ckb_std::high_level::{load_script, load_witness_args};
+use ckb_std::high_level::{load_input_since, load_script, load_witness_args};
 
 #[cfg(not(any(feature = "library", test)))]
 ckb_std::entry!(program_entry);
@@ -73,6 +73,8 @@ pub const ERR_CALCULATE_INPUTS: i8 = 12;
 pub const ERR_SECP_PARSE_SIGNATURE: i8 = 13;
 /// Public key recovery failed (recovered point was the identity element).
 pub const ERR_SECP_RECOVER_PUBKEY: i8 = 14;
+/// Failed to load this input's `since` field.
+pub const ERR_LOAD_SINCE: i8 = 15;
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 
@@ -171,6 +173,32 @@ pub fn load_and_parse_witness() -> Result<TranfrWitness, i8> {
     parse_tranfr_witness_lock(lock_bytes.as_ref())
 }
 
+// ── Recipient since gate ─────────────────────────────────────────────────────
+
+/// Bit 63 of `since`: set means relative (anchored to the cell's commitment block).
+const SINCE_RELATIVE_BIT: u64 = 1 << 63;
+
+/// Pure recipient-path gate (docs/spec.md §5). A relative-flagged input
+/// `since` is rejected outright with `ERR_RELATIVE_SINCE`; any other
+/// metric mismatch, malformed deadline, or not-yet-reached deadline is
+/// `ERR_SINCE_NOT_ELIGIBLE`. No fallback comparison is ever attempted.
+pub fn check_recipient_since(input_since: u64, deadline_since: u64) -> Result<(), i8> {
+    if input_since & SINCE_RELATIVE_BIT != 0 {
+        return Err(ERR_RELATIVE_SINCE);
+    }
+    if recipient_path_eligible(input_since, deadline_since) {
+        Ok(())
+    } else {
+        Err(ERR_SINCE_NOT_ELIGIBLE)
+    }
+}
+
+/// Loads this group's first input's raw `since` and applies the gate.
+fn verify_recipient_since(args: &TranfrArgs) -> Result<(), i8> {
+    let input_since = load_input_since(0, Source::GroupInput).map_err(|_| ERR_LOAD_SINCE)?;
+    check_recipient_since(input_since, args.deadline_since)
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 pub fn program_entry() -> i8 {
@@ -194,19 +222,16 @@ pub fn program_entry() -> i8 {
                 Err(err) => err,
             }
         }
-        // RECIPIENT path shares the same signature machinery, but must
-        // additionally satisfy the since-eligibility gate before it can
-        // succeed — that gate is step 7. Verifying the signature here
-        // first is deliberate (it's genuinely shared, mode-agnostic
-        // machinery per docs/spec.md §3), but the path is intentionally
-        // left unable to fully succeed until step 7 wires in
-        // recipient_path_eligible, so an incomplete implementation can
-        // never be mistaken for a working (and exploitable) early-claim
-        // path in the meantime.
+        // RECIPIENT path: valid signature against recipient_lock_hash AND
+        // the input's own `since` must be absolute epoch-with-fraction and
+        // at or past deadline_since.
         UnlockMode::Recipient => {
             match verify_signature_matches_lock_hash(&witness.signature, &args.recipient_lock_hash)
             {
-                Ok(true) => ERR_SINCE_NOT_ELIGIBLE, // TODO(step 7): real since check.
+                Ok(true) => match verify_recipient_since(&args) {
+                    Ok(()) => 0,
+                    Err(err) => err,
+                },
                 Ok(false) => ERR_RECIPIENT_SIG,
                 Err(err) => err,
             }
@@ -268,5 +293,32 @@ mod tests {
         assert_eq!(parse_tranfr_witness_lock(&lock).unwrap_err(), ERR_UNKNOWN_MODE);
         lock[0] = 0xFF;
         assert_eq!(parse_tranfr_witness_lock(&lock).unwrap_err(), ERR_UNKNOWN_MODE);
+    }
+
+    fn since(flags: u8, epoch: u64, index: u64, length: u64) -> u64 {
+        ((flags as u64) << 56) | (length << 40) | (index << 24) | epoch
+    }
+
+    #[test]
+    fn recipient_since_gate() {
+        let deadline = since(0x20, 100, 1, 4);
+        // at boundary and after: ok
+        assert_eq!(check_recipient_since(since(0x20, 100, 1, 4), deadline), Ok(()));
+        assert_eq!(check_recipient_since(since(0x20, 100, 2, 8), deadline), Ok(()));
+        assert_eq!(check_recipient_since(since(0x20, 101, 0, 1), deadline), Ok(()));
+        // before: not eligible
+        assert_eq!(check_recipient_since(since(0x20, 100, 0, 4), deadline), Err(ERR_SINCE_NOT_ELIGIBLE));
+        assert_eq!(check_recipient_since(since(0x20, 99, 3, 4), deadline), Err(ERR_SINCE_NOT_ELIGIBLE));
+        // degenerate zero-length early-claim attempt
+        assert_eq!(check_recipient_since(since(0x20, 100, 0, 0), deadline), Err(ERR_SINCE_NOT_ELIGIBLE));
+        // no since at all
+        assert_eq!(check_recipient_since(0, deadline), Err(ERR_SINCE_NOT_ELIGIBLE));
+        // relative-flagged epoch since, even far in the future
+        assert_eq!(check_recipient_since(since(0xA0, 999, 0, 1), deadline), Err(ERR_RELATIVE_SINCE));
+        // other metrics (block number / timestamp), absolute
+        assert_eq!(check_recipient_since(since(0x00, 999_999, 0, 0), deadline), Err(ERR_SINCE_NOT_ELIGIBLE));
+        assert_eq!(check_recipient_since(since(0x40, 999_999, 0, 0), deadline), Err(ERR_SINCE_NOT_ELIGIBLE));
+        // malformed deadline (non-epoch metric) never satisfiable
+        assert_eq!(check_recipient_since(since(0x20, 999, 0, 1), since(0x00, 1, 0, 0)), Err(ERR_SINCE_NOT_ELIGIBLE));
     }
 }
