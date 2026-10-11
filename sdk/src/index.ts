@@ -6,6 +6,7 @@
 export * from "./types.js";
 export * from "./config.js";
 export * from "./client.js";
+export * from "./codec.js";
 
 // Re-export verified fraction-safe since comparison routines from step 2
 export {

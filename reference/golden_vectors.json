@@ -1,0 +1,39 @@
+{
+  "args": [
+    {
+      "description": "Uniform AA/BB lock hashes with test deadline",
+      "ownerLockHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "recipientLockHash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "deadlineSince": "0x2000000000000050",
+      "expectedHex": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb5000000000000020"
+    },
+    {
+      "description": "All zeros hashes with minimum epoch fraction",
+      "ownerLockHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "recipientLockHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "deadlineSince": "0x2000010000000000",
+      "expectedHex": "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010020"
+    },
+    {
+      "description": "Realistic testnet script hashes with 540-epoch deadline (epoch=540, index=0, length=1800)",
+      "ownerLockHash": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
+      "recipientLockHash": "0x466606ff9d91930d0eece350366b822c40d602f1000000000000000000000000",
+      "deadlineSince": "0x200708000000021c",
+      "expectedHex": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8466606ff9d91930d0eece350366b822c40d602f10000000000000000000000001c02000000080720"
+    }
+  ],
+  "witness": [
+    {
+      "description": "Mode 0 (Owner) with sample 65-byte signature",
+      "mode": 0,
+      "signature": "0x1111111111111111111111111111111111111111111111111111111111111111222222222222222222222222222222222222222222222222222222222222222200",
+      "expectedHex": "0x001111111111111111111111111111111111111111111111111111111111111111222222222222222222222222222222222222222222222222222222222222222200"
+    },
+    {
+      "description": "Mode 1 (Recipient) with sample 65-byte signature",
+      "mode": 1,
+      "signature": "0x3333333333333333333333333333333333333333333333333333333333333333444444444444444444444444444444444444444444444444444444444444444401",
+      "expectedHex": "0x013333333333333333333333333333333333333333333333333333333333333333444444444444444444444444444444444444444444444444444444444444444401"
+    }
+  ]
+}

@@ -269,6 +269,64 @@ mod tests {
         assert_eq!(parsed.deadline_since, deadline);
     }
 
+    fn decode_hex_exact<const N: usize>(hex_str: &str) -> [u8; N] {
+        let s = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+        assert_eq!(s.len(), N * 2, "hex length mismatch");
+        let mut out = [0u8; N];
+        for i in 0..N {
+            out[i] = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).expect("valid hex byte");
+        }
+        out
+    }
+
+    #[test]
+    fn test_cross_language_golden_vectors_args() {
+        // Vector 1: Uniform AA/BB
+        let hex1 = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb5000000000000020";
+        let bytes1 = decode_hex_exact::<72>(hex1);
+        let parsed1 = parse_tranfr_args(&bytes1).expect("vector 1 valid");
+        assert_eq!(parsed1.owner_lock_hash, [0xaa; 32]);
+        assert_eq!(parsed1.recipient_lock_hash, [0xbb; 32]);
+        assert_eq!(parsed1.deadline_since, 0x2000000000000050);
+
+        // Vector 2: Zeros
+        let hex2 = "0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010020";
+        let bytes2 = decode_hex_exact::<72>(hex2);
+        let parsed2 = parse_tranfr_args(&bytes2).expect("vector 2 valid");
+        assert_eq!(parsed2.owner_lock_hash, [0x00; 32]);
+        assert_eq!(parsed2.recipient_lock_hash, [0x00; 32]);
+        assert_eq!(parsed2.deadline_since, 0x2000010000000000);
+
+        // Vector 3: Testnet script hashes + 540-epoch deadline
+        let hex3 = "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8466606ff9d91930d0eece350366b822c40d602f10000000000000000000000001c02000000080720";
+        let bytes3 = decode_hex_exact::<72>(hex3);
+        let parsed3 = parse_tranfr_args(&bytes3).expect("vector 3 valid");
+        assert_eq!(parsed3.owner_lock_hash, decode_hex_exact::<32>("9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8"));
+        assert_eq!(parsed3.recipient_lock_hash, decode_hex_exact::<32>("466606ff9d91930d0eece350366b822c40d602f1000000000000000000000000"));
+        assert_eq!(parsed3.deadline_since, 0x200708000000021c);
+    }
+
+    #[test]
+    fn test_cross_language_golden_vectors_witness() {
+        // Mode 0 (Owner)
+        let hex_owner = "0x001111111111111111111111111111111111111111111111111111111111111111222222222222222222222222222222222222222222222222222222222222222200";
+        let bytes_owner = decode_hex_exact::<66>(hex_owner);
+        let parsed_owner = parse_tranfr_witness_lock(&bytes_owner).expect("witness owner valid");
+        assert_eq!(parsed_owner.mode, UnlockMode::Owner);
+        assert_eq!(parsed_owner.signature[0..32], [0x11; 32]);
+        assert_eq!(parsed_owner.signature[32..64], [0x22; 32]);
+        assert_eq!(parsed_owner.signature[64], 0x00);
+
+        // Mode 1 (Recipient)
+        let hex_recipient = "0x013333333333333333333333333333333333333333333333333333333333333333444444444444444444444444444444444444444444444444444444444444444401";
+        let bytes_recipient = decode_hex_exact::<66>(hex_recipient);
+        let parsed_recipient = parse_tranfr_witness_lock(&bytes_recipient).expect("witness recipient valid");
+        assert_eq!(parsed_recipient.mode, UnlockMode::Recipient);
+        assert_eq!(parsed_recipient.signature[0..32], [0x33; 32]);
+        assert_eq!(parsed_recipient.signature[32..64], [0x44; 32]);
+        assert_eq!(parsed_recipient.signature[64], 0x01);
+    }
+
     #[test]
     fn test_parse_tranfr_args_invalid_len() {
         assert_eq!(parse_tranfr_args(&[]).unwrap_err(), ERR_ARGS_LEN);
