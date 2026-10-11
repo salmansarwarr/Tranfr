@@ -112,7 +112,7 @@ async function main() {
   console.log("==================================================");
 
   if (options.generateKey) {
-    const client = new ccc.ClientPublicTestnet(options.rpcUrl);
+    const client = new ccc.ClientPublicTestnet({ url: options.rpcUrl });
     const randomBytes = crypto.randomBytes(32);
     const key = `0x${randomBytes.toString("hex")}`;
     const signer = new ccc.SignerCkbPrivateKey(client, key);
@@ -151,7 +151,7 @@ async function main() {
   // 2. Connect to RPC and verify testnet identity
   console.log("\n2. Connecting to CKB Network:");
   console.log(`   RPC URL: ${options.rpcUrl}`);
-  const client = new ccc.ClientPublicTestnet(options.rpcUrl);
+  const client = new ccc.ClientPublicTestnet({ url: options.rpcUrl });
 
   let genesisHash: string;
   let chainName: string;
@@ -219,7 +219,7 @@ async function main() {
   const dummyType = new ccc.Script(
     typeIdScriptTemplate.codeHash,
     "type",
-    "0x" + "00".repeat(32)
+    `0x${"00".repeat(32)}`
   );
   const sampleOutput = new ccc.CellOutput(0n, deployerLock, dummyType);
   const cellOccupiedBytes = sampleOutput.occupiedSize + binary.length;

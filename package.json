@@ -2,7 +2,11 @@
   "name": "tranfr",
   "version": "1.0.0",
   "description": "Programmable recovery for CKB self-custody — a lock script that lets an owner keep full control of their assets while active, and lets a designated recovery recipient claim them if the owner goes inactive for a defined period. No custodian, no oracle, no protocol changes.",
-  "main": "index.js",
+  "main": "./sdk/src/index.ts",
+  "types": "./sdk/src/index.ts",
+  "exports": {
+    ".": "./sdk/src/index.ts"
+  },
   "directories": {
     "doc": "docs",
     "test": "tests"
@@ -12,6 +16,9 @@
     "build:contract": "make build CONTRACT=tranfr-lock",
     "test:contract": "cargo test",
     "test:reference": "tsx --test reference/since-cmp-ts/since_cmp.test.ts",
+    "test:sdk": "tsx --test sdk/tests/*.test.ts",
+    "test:all": "cargo test && tsx --test reference/since-cmp-ts/since_cmp.test.ts && tsx --test sdk/tests/*.test.ts",
+    "typecheck": "tsc --noEmit",
     "generate-key": "tsx scripts/deploy.ts --generate-key",
     "deploy": "tsx scripts/deploy.ts"
   },
@@ -24,6 +31,6 @@
   "devDependencies": {
     "@types/node": "^26.6.5",
     "tsx": "^4.23.15",
-    "typescript": "^7.0.2"
+    "typescript": "^5.9.3"
   }
 }
