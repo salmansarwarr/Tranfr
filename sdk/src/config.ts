@@ -30,3 +30,9 @@ export const DEFAULT_DURATION_EPOCHS = 540n;
  * to track dynamic difficulty adjustments.
  */
 export const NOMINAL_HOURS_PER_EPOCH = 4.0;
+
+/**
+ * Default fee rate in shannons/KB for owner-reclaim/recipient-claim/renew spends,
+ * matching ckb-cli's conventional minimum fee rate.
+ */
+export const DEFAULT_FEE_RATE = 1000n;

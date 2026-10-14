@@ -73,11 +73,19 @@ export interface CreateTranfrParams {
 
 /**
  * Parameters for renewing a Tranfr cell.
+ * Owner-mode spend of the existing cell into a new output with a freshly
+ * computed deadline (and optionally a new recipient) — per docs/spec.md,
+ * this is both "heartbeat" and "policy update"; there is no separate
+ * on-chain renewal transaction type.
  */
 export interface RenewTranfrParams {
   cell: ccc.Cell;
+  /** Private key matching the cell's owner_lock_hash, used to sign the OWNER-mode witness. */
+  ownerPrivateKey: ccc.HexLike;
   newDurationEpochs?: bigint;
   newRecipientLock?: ccc.ScriptLike;
+  /** Fee rate in shannons/KB. Defaults to DEFAULT_FEE_RATE. The fee is deducted from the renewed cell's own capacity. */
+  feeRate?: ccc.NumLike;
 }
 
 /**
