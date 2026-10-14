@@ -93,7 +93,12 @@ export interface RenewTranfrParams {
  */
 export interface ClaimTranfrParams {
   cell: ccc.Cell;
+  /** Private key matching the cell's recipient_lock_hash, used to sign the RECIPIENT-mode witness. */
+  recipientPrivateKey: ccc.HexLike;
+  /** Destination lock for the claimed capacity. Defaults to the recipient private key's own secp256k1 lock. */
   toLock?: ccc.ScriptLike;
+  /** Fee rate in shannons/KB. Defaults to DEFAULT_FEE_RATE. The fee is deducted from the cell's own capacity. */
+  feeRate?: ccc.NumLike;
 }
 
 /**
@@ -101,5 +106,10 @@ export interface ClaimTranfrParams {
  */
 export interface ReclaimTranfrParams {
   cell: ccc.Cell;
+  /** Private key matching the cell's owner_lock_hash, used to sign the OWNER-mode witness. */
+  ownerPrivateKey: ccc.HexLike;
+  /** Destination lock for the reclaimed capacity. Defaults to the owner private key's own secp256k1 lock. */
   toLock?: ccc.ScriptLike;
+  /** Fee rate in shannons/KB. Defaults to DEFAULT_FEE_RATE. The fee is deducted from the cell's own capacity. */
+  feeRate?: ccc.NumLike;
 }

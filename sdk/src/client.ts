@@ -1,5 +1,13 @@
 import * as ccc from "@ckb-ccc/core";
-import { TranfrConfig, TranfrStatus, CreateTranfrParams, RenewTranfrParams, UnlockMode } from "./types.js";
+import {
+  TranfrConfig,
+  TranfrStatus,
+  UnlockMode,
+  CreateTranfrParams,
+  RenewTranfrParams,
+  ClaimTranfrParams,
+  ReclaimTranfrParams,
+} from "./types.js";
 import { TRANFR_TESTNET_CONFIG, NOMINAL_HOURS_PER_EPOCH, DEFAULT_DURATION_EPOCHS, DEFAULT_FEE_RATE } from "./config.js";
 import { encodeArgs, decodeArgs, WITNESS_LOCK_LEN } from "./codec.js";
 import { signTranfrInput } from "./sign.js";
@@ -206,5 +214,61 @@ export class TranfrClient {
     tx.addCellDeps(this.getCellDep());
 
     return this.finalizeSingleOutputSpend(tx, cell.cellOutput.lock, UnlockMode.OWNER, ownerPrivateKey, feeRate);
+  }
+
+  /**
+   * Step 18: owner-mode spend of the cell to an arbitrary destination lock,
+   * with no `since` requirement — the owner can reclaim at any time, even
+   * after the recovery deadline has technically passed.
+   */
+  public async buildOwnerReclaim(params: ReclaimTranfrParams): Promise<ccc.Transaction> {
+    const { cell, ownerPrivateKey, feeRate } = params;
+    const toLock = params.toLock
+      ? ccc.Script.from(params.toLock)
+      : (await new ccc.SignerCkbPrivateKey(this.client, ownerPrivateKey).getAddressObjSecp256k1()).script;
+
+    const tx = ccc.Transaction.from({
+      inputs: [{ previousOutput: cell.outPoint, cellOutput: cell.cellOutput, outputData: cell.outputData }],
+      outputs: [{ lock: toLock, capacity: cell.cellOutput.capacity }],
+      outputsData: ["0x"],
+    });
+    tx.addCellDeps(this.getCellDep());
+
+    return this.finalizeSingleOutputSpend(tx, cell.cellOutput.lock, UnlockMode.OWNER, ownerPrivateKey, feeRate);
+  }
+
+  /**
+   * Step 18: recipient-mode spend of the cell to an arbitrary destination
+   * lock, with the input's `since` set to the cell's own embedded deadline.
+   * Calls `isRecoveryEligible` first and throws client-side rather than
+   * constructing a transaction consensus would reject anyway.
+   */
+  public async buildRecoveryClaim(params: ClaimTranfrParams): Promise<ccc.Transaction> {
+    const { cell, recipientPrivateKey, feeRate } = params;
+    const args = decodeArgs(cell.cellOutput.lock.args);
+
+    if (!(await this.isRecoveryEligible(args.deadlineSince))) {
+      throw new Error("Recovery is not yet eligible: the embedded deadline has not passed");
+    }
+
+    const toLock = params.toLock
+      ? ccc.Script.from(params.toLock)
+      : (await new ccc.SignerCkbPrivateKey(this.client, recipientPrivateKey).getAddressObjSecp256k1()).script;
+
+    const tx = ccc.Transaction.from({
+      inputs: [
+        {
+          previousOutput: cell.outPoint,
+          cellOutput: cell.cellOutput,
+          outputData: cell.outputData,
+          since: args.deadlineSince,
+        },
+      ],
+      outputs: [{ lock: toLock, capacity: cell.cellOutput.capacity }],
+      outputsData: ["0x"],
+    });
+    tx.addCellDeps(this.getCellDep());
+
+    return this.finalizeSingleOutputSpend(tx, cell.cellOutput.lock, UnlockMode.RECIPIENT, recipientPrivateKey, feeRate);
   }
 }
