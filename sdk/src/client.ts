@@ -80,10 +80,11 @@ export class TranfrClient {
    * that with `isRecoveryEligible` to report its current status.
    */
   public async getTranfrStatus(cellOutPoint: ccc.OutPointLike): Promise<TranfrStatus> {
-    const cell = await this.client.getCell(cellOutPoint);
+    // getCell would also return already-spent cells; status must reflect the live set.
+    const cell = await this.client.getCellLive(cellOutPoint, true);
     if (!cell) {
       const outPoint = ccc.OutPoint.from(cellOutPoint);
-      throw new Error(`Tranfr cell not found at ${outPoint.txHash}:${outPoint.index}`);
+      throw new Error(`No live Tranfr cell at ${outPoint.txHash}:${outPoint.index} (not found or already spent)`);
     }
 
     const args = decodeArgs(cell.cellOutput.lock.args);
@@ -166,9 +167,17 @@ export class TranfrClient {
     await tx.prepareSighashAllWitness(script, WITNESS_LOCK_LEN, this.client);
 
     const fee = tx.estimateFee(feeRate ?? DEFAULT_FEE_RATE);
-    const output = tx.outputs[tx.outputs.length - 1];
-    if (output.capacity < fee) {
-      throw new Error(`Cell capacity ${output.capacity} is insufficient to cover fee ${fee}`);
+    const outputIndex = tx.outputs.length - 1;
+    const output = tx.outputs[outputIndex];
+    const minCapacity = ccc.fixedPointFrom(
+      output.occupiedSize + ccc.bytesFrom(tx.outputsData[outputIndex] ?? "0x").length,
+    );
+    if (output.capacity - fee < minCapacity) {
+      throw new Error(
+        `Cell capacity ${ccc.fixedPointToString(output.capacity)} CKB cannot cover the fee ` +
+          `(${ccc.fixedPointToString(fee)} CKB) and still meet the output's minimum of ` +
+          `${ccc.fixedPointToString(minCapacity)} CKB`,
+      );
     }
     output.capacity -= fee;
 

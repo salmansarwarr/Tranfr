@@ -53,9 +53,14 @@ class FakeClient {
     return { epoch: ccc.Epoch.from(this.tipEpoch) } as unknown as ccc.ClientBlockHeader;
   }
 
-  async getCell(outPointLike: ccc.OutPointLike) {
+  // `cells` models the live cell set: anything absent is unknown or already spent.
+  async getCellLive(outPointLike: ccc.OutPointLike) {
     const outPoint = ccc.OutPoint.from(outPointLike);
     return this.cells.get(`${outPoint.txHash}:${outPoint.index}`);
+  }
+
+  async getCell(): Promise<ccc.Cell | undefined> {
+    throw new Error("status must not use getCell: it also returns spent cells");
   }
 }
 
@@ -80,7 +85,7 @@ test("isRecoveryEligible returns false before the deadline and true at/after it"
   assert.equal(await afterClient.isRecoveryEligible(deadline), true);
 });
 
-function buildTranfrCell(args: { ownerLockHash: ccc.Hex; recipientLockHash: ccc.Hex; deadlineSince: bigint }, capacity = 100_00000000n) {
+function buildTranfrCell(args: { ownerLockHash: ccc.Hex; recipientLockHash: ccc.Hex; deadlineSince: bigint }, capacity = 200_00000000n) {
   const client = new TranfrClient();
   const encodedArgs = ccc.hexFrom(
     ccc.bytesConcat(
@@ -125,9 +130,12 @@ test("getTranfrStatus decodes args and reports claimability/epochsRemaining corr
   assert.equal(statusAfter.epochsRemaining, 0n);
 });
 
-test("getTranfrStatus throws when the cell does not exist", async () => {
+test("getTranfrStatus throws when the cell is not live (missing or already spent)", async () => {
   const client = new TranfrClient({ client: fakeClient([0n, 0n, 1n]) });
-  await assert.rejects(() => client.getTranfrStatus({ txHash: `0x${"00".repeat(32)}`, index: 0 }));
+  await assert.rejects(
+    () => client.getTranfrStatus({ txHash: `0x${"00".repeat(32)}`, index: 0 }),
+    /not found or already spent/,
+  );
 });
 
 test("createTranfr builds an output encoding currentEpoch + durationEpochs as the deadline", async () => {
@@ -290,4 +298,25 @@ test("buildRecoveryClaim signs a RECIPIENT-mode witness with since set to the de
 
   const signInfo = await recomputeSignMessage(tx, client.client, cell.cellOutput.lock);
   assert.equal(ccc.recoverMessageSecp256k1(signInfo!.message, witness.signature), recipientSigner.publicKey);
+});
+
+test("renewTranfr refuses to deduct a fee that would leave the cell below its minimum capacity", async () => {
+  const ownerSigner = new ccc.SignerCkbPrivateKey(new ccc.ClientPublicTestnet(), OWNER_PRIVATE_KEY);
+  const ownerScript = (await ownerSigner.getAddressObjSecp256k1()).script;
+  // 113 CKB is exactly the occupied size of a Tranfr cell (8 + 32 + 1 + 72 bytes), so any fee breaks it.
+  const cell = buildTranfrCell(
+    {
+      ownerLockHash: ownerScript.hash(),
+      recipientLockHash: dummyLockHash(0x22),
+      deadlineSince: packSince(EPOCH_FRACTION_FLAG, 100n, 0n, 1n),
+    },
+    113_00000000n,
+  );
+  assert.equal(cell.cellOutput.capacity, 113_00000000n);
+  const client = new TranfrClient({ client: fakeClient([200n, 0n, 1n]) });
+
+  await assert.rejects(
+    () => client.renewTranfr({ cell, ownerPrivateKey: OWNER_PRIVATE_KEY }),
+    /minimum of 113 CKB/,
+  );
 });
