@@ -10,6 +10,7 @@ import {
   packSince,
   EPOCH_FRACTION_FLAG,
   WITNESS_LOCK_LEN,
+  SECP256K1_BLAKE160_CODE_HASH,
 } from "../src/index.js";
 
 // Private key 1 (scalar value 1): a minimal, deterministic valid secp256k1 key for tests.
@@ -68,6 +69,10 @@ function fakeClient(tipEpoch: ccc.EpochLike, cells?: Map<string, ccc.Cell>): ccc
   return new FakeClient(tipEpoch, cells) as unknown as ccc.Client;
 }
 
+async function secp256k1LockOf(privateKey: ccc.Hex): Promise<ccc.Script> {
+  return (await new ccc.SignerCkbPrivateKey(new ccc.ClientPublicTestnet(), privateKey).getAddressObjSecp256k1()).script;
+}
+
 function dummyLockHash(byte: number): ccc.Hex {
   return `0x${byte.toString(16).padStart(2, "0").repeat(32)}` as ccc.Hex;
 }
@@ -85,7 +90,11 @@ test("isRecoveryEligible returns false before the deadline and true at/after it"
   assert.equal(await afterClient.isRecoveryEligible(deadline), true);
 });
 
-function buildTranfrCell(args: { ownerLockHash: ccc.Hex; recipientLockHash: ccc.Hex; deadlineSince: bigint }, capacity = 200_00000000n) {
+function buildTranfrCell(
+  args: { ownerLockHash: ccc.Hex; recipientLockHash: ccc.Hex; deadlineSince: bigint },
+  capacity = 200_00000000n,
+  extra: { type?: ccc.ScriptLike; outputData?: ccc.HexLike } = {},
+) {
   const client = new TranfrClient();
   const encodedArgs = ccc.hexFrom(
     ccc.bytesConcat(
@@ -102,8 +111,8 @@ function buildTranfrCell(args: { ownerLockHash: ccc.Hex; recipientLockHash: ccc.
   const outPoint = ccc.OutPoint.from({ txHash: `0x${"ab".repeat(32)}`, index: 0 });
   const cell = ccc.Cell.from({
     outPoint,
-    cellOutput: { capacity, lock },
-    outputData: "0x",
+    cellOutput: { capacity, lock, type: extra.type },
+    outputData: extra.outputData ?? "0x",
   });
   return cell;
 }
@@ -140,8 +149,8 @@ test("getTranfrStatus throws when the cell is not live (missing or already spent
 
 test("createTranfr builds an output encoding currentEpoch + durationEpochs as the deadline", async () => {
   const client = new TranfrClient({ client: fakeClient([100n, 0n, 1n]) });
-  const ownerLock = ccc.Script.from({ codeHash: `0x${"11".repeat(32)}`, hashType: "type", args: "0x01" });
-  const recipientLock = ccc.Script.from({ codeHash: `0x${"22".repeat(32)}`, hashType: "type", args: "0x02" });
+  const ownerLock = await secp256k1LockOf(OWNER_PRIVATE_KEY);
+  const recipientLock = await secp256k1LockOf(RECIPIENT_PRIVATE_KEY);
 
   const tx = await client.createTranfr({
     ownerLock,
@@ -198,7 +207,7 @@ test("renewTranfr can change the recipient", async () => {
   const ownerSigner = new ccc.SignerCkbPrivateKey(new ccc.ClientPublicTestnet(), OWNER_PRIVATE_KEY);
   const ownerScript = (await ownerSigner.getAddressObjSecp256k1()).script;
   const oldRecipientLockHash = dummyLockHash(0x22);
-  const newRecipientLock = ccc.Script.from({ codeHash: `0x${"55".repeat(32)}`, hashType: "type", args: "0x" });
+  const newRecipientLock = await secp256k1LockOf(RECIPIENT_PRIVATE_KEY);
   const oldDeadline = packSince(EPOCH_FRACTION_FLAG, 100n, 0n, 1n);
 
   const cell = buildTranfrCell({
@@ -318,5 +327,105 @@ test("renewTranfr refuses to deduct a fee that would leave the cell below its mi
   await assert.rejects(
     () => client.renewTranfr({ cell, ownerPrivateKey: OWNER_PRIVATE_KEY }),
     /minimum of 113 CKB/,
+  );
+});
+
+const NON_SECP256K1_LOCKS: Array<[string, ccc.ScriptLike]> = [
+  ["a different lock (e.g. JoyID/Omnilock)", { codeHash: `0x${"11".repeat(32)}`, hashType: "type", args: `0x${"aa".repeat(20)}` }],
+  ["the secp256k1 code hash with hash_type data1", { codeHash: SECP256K1_BLAKE160_CODE_HASH, hashType: "data1", args: `0x${"aa".repeat(20)}` }],
+  ["the secp256k1 code hash with non-20-byte args", { codeHash: SECP256K1_BLAKE160_CODE_HASH, hashType: "type", args: `0x${"aa".repeat(21)}` }],
+];
+
+test("createTranfr refuses owner or recipient locks the script could never verify", async () => {
+  const client = new TranfrClient({ client: fakeClient([100n, 0n, 1n]) });
+  const validLock = await secp256k1LockOf(OWNER_PRIVATE_KEY);
+
+  for (const [label, badLock] of NON_SECP256K1_LOCKS) {
+    await assert.rejects(
+      () => client.createTranfr({ ownerLock: badLock, recipientLock: validLock, capacity: 300_00000000n }),
+      /owner lock must be a standard secp256k1_blake160 lock/,
+      `owner: ${label}`,
+    );
+    await assert.rejects(
+      () => client.createTranfr({ ownerLock: validLock, recipientLock: badLock, capacity: 300_00000000n }),
+      /recipient lock must be a standard secp256k1_blake160 lock/,
+      `recipient: ${label}`,
+    );
+  }
+});
+
+test("renewTranfr refuses a new recipient lock the script could never verify", async () => {
+  const ownerScript = await secp256k1LockOf(OWNER_PRIVATE_KEY);
+  const cell = buildTranfrCell({
+    ownerLockHash: ownerScript.hash(),
+    recipientLockHash: dummyLockHash(0x22),
+    deadlineSince: packSince(EPOCH_FRACTION_FLAG, 100n, 0n, 1n),
+  });
+  const client = new TranfrClient({ client: fakeClient([200n, 0n, 1n]) });
+
+  for (const [label, badLock] of NON_SECP256K1_LOCKS) {
+    await assert.rejects(
+      () => client.renewTranfr({ cell, ownerPrivateKey: OWNER_PRIVATE_KEY, newRecipientLock: badLock }),
+      /recipient lock must be a standard secp256k1_blake160 lock/,
+      label,
+    );
+  }
+});
+
+const UDT_TYPE: ccc.ScriptLike = { codeHash: `0x${"77".repeat(32)}`, hashType: "type", args: `0x${"88".repeat(32)}` };
+const UDT_AMOUNT: ccc.Hex = `0x${"01".padEnd(32, "0")}`;
+const UDT_CELL_DEP: ccc.CellDepLike = {
+  outPoint: { txHash: `0x${"99".repeat(32)}`, index: 0 },
+  depType: "code",
+};
+
+async function buildTypedCell() {
+  const ownerScript = await secp256k1LockOf(OWNER_PRIVATE_KEY);
+  const recipientScript = await secp256k1LockOf(RECIPIENT_PRIVATE_KEY);
+  return buildTranfrCell(
+    {
+      ownerLockHash: ownerScript.hash(),
+      recipientLockHash: recipientScript.hash(),
+      deadlineSince: packSince(EPOCH_FRACTION_FLAG, 540n, 0n, 1n),
+    },
+    300_00000000n,
+    { type: UDT_TYPE, outputData: UDT_AMOUNT },
+  );
+}
+
+function assertKeepsTypeAndData(tx: ccc.Transaction) {
+  assert.ok(tx.outputs[0].type?.eq(UDT_TYPE), "type script must be preserved");
+  assert.equal(tx.outputsData[0], UDT_AMOUNT, "cell data must be preserved");
+  assert.ok(
+    tx.cellDeps.some((dep) => dep.eq(ccc.CellDep.from(UDT_CELL_DEP))),
+    "the type script's cell dep must be included before signing",
+  );
+}
+
+test("renew, reclaim and claim keep a typed cell's type script and data", async () => {
+  const cell = await buildTypedCell();
+  const client = new TranfrClient({ client: fakeClient([600n, 0n, 1n]) });
+
+  assertKeepsTypeAndData(
+    await client.renewTranfr({ cell, ownerPrivateKey: OWNER_PRIVATE_KEY, cellDeps: [UDT_CELL_DEP] }),
+  );
+  assertKeepsTypeAndData(
+    await client.buildOwnerReclaim({ cell, ownerPrivateKey: OWNER_PRIVATE_KEY, cellDeps: [UDT_CELL_DEP] }),
+  );
+  assertKeepsTypeAndData(
+    await client.buildRecoveryClaim({ cell, recipientPrivateKey: RECIPIENT_PRIVATE_KEY, cellDeps: [UDT_CELL_DEP] }),
+  );
+});
+
+test("spending a typed cell without its cell deps is refused before signing", async () => {
+  const cell = await buildTypedCell();
+  const client = new TranfrClient({ client: fakeClient([600n, 0n, 1n]) });
+  const missingDeps = /has a type script; pass that script's cell deps/;
+
+  await assert.rejects(() => client.renewTranfr({ cell, ownerPrivateKey: OWNER_PRIVATE_KEY }), missingDeps);
+  await assert.rejects(() => client.buildOwnerReclaim({ cell, ownerPrivateKey: OWNER_PRIVATE_KEY }), missingDeps);
+  await assert.rejects(
+    () => client.buildRecoveryClaim({ cell, recipientPrivateKey: RECIPIENT_PRIVATE_KEY }),
+    missingDeps,
   );
 });

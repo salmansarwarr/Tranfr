@@ -167,4 +167,4 @@ Because the deployment uses Type ID, cells reference the script by its type hash
 - No multi-recipient or threshold recovery: `recipient_lock_hash` is a single value, not a list or Merkle root.
 - No signer types other than `secp256k1_blake160_sighash_all` for owner or recipient (§3.1).
 - No on-chain distinction between "heartbeat" and "recipient change": both are owner-path spends producing a new cell. The distinction exists only in the SDK (`renewTranfr`).
-- No restriction on, or support for, type scripts on Tranfr cells. The lock ignores the type field, but the v1 SDK builders assume plain CKB cells (`docs/security-model.md` §5.2).
+- No restriction on type scripts on Tranfr cells: the lock ignores the type field. The SDK preserves a cell's type script and data when spending it, but only creates plain CKB cells (`docs/security-model.md` §5.2).

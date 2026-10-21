@@ -8,7 +8,13 @@ import {
   ClaimTranfrParams,
   ReclaimTranfrParams,
 } from "./types.js";
-import { TRANFR_TESTNET_CONFIG, NOMINAL_HOURS_PER_EPOCH, DEFAULT_DURATION_EPOCHS, DEFAULT_FEE_RATE } from "./config.js";
+import {
+  TRANFR_TESTNET_CONFIG,
+  NOMINAL_HOURS_PER_EPOCH,
+  DEFAULT_DURATION_EPOCHS,
+  DEFAULT_FEE_RATE,
+  SECP256K1_BLAKE160_CODE_HASH,
+} from "./config.js";
 import { encodeArgs, decodeArgs, WITNESS_LOCK_LEN } from "./codec.js";
 import { signTranfrInput } from "./sign.js";
 import {
@@ -18,6 +24,27 @@ import {
 } from "../../reference/since-cmp-ts/since_cmp.js";
 
 const SINCE_EPOCH_VALUE_MASK = 0x00ff_ffff_ffff_ffffn;
+
+/**
+ * The lock can only ever verify signatures from a standard secp256k1_blake160
+ * lock (docs/spec.md §3.1). Embedding the hash of any other lock makes that
+ * role permanently unable to sign, and if both roles are affected the funds
+ * are locked forever — so refuse before building such a cell.
+ */
+export function assertSecp256k1Lock(lockLike: ccc.ScriptLike, role: "owner" | "recipient"): ccc.Script {
+  const lock = ccc.Script.from(lockLike);
+  const isSecp256k1 =
+    lock.codeHash === SECP256K1_BLAKE160_CODE_HASH &&
+    lock.hashType === "type" &&
+    ccc.bytesFrom(lock.args).length === 20;
+  if (!isSecp256k1) {
+    throw new Error(
+      `The ${role} lock must be a standard secp256k1_blake160 lock (a default CKB address); ` +
+        `Tranfr cannot verify signatures from any other lock, so that role could never sign`,
+    );
+  }
+  return lock;
+}
 
 /**
  * High-level Tranfr SDK client built on top of CCC (ckb-devrel/ccc).
@@ -122,8 +149,8 @@ export class TranfrClient {
    * this function never hand-rolls that funding/signing flow.
    */
   public async createTranfr(params: CreateTranfrParams): Promise<ccc.Transaction> {
-    const ownerLock = ccc.Script.from(params.ownerLock);
-    const recipientLock = ccc.Script.from(params.recipientLock);
+    const ownerLock = assertSecp256k1Lock(params.ownerLock, "owner");
+    const recipientLock = assertSecp256k1Lock(params.recipientLock, "recipient");
     const durationEpochs = params.durationEpochs ?? DEFAULT_DURATION_EPOCHS;
 
     const tipEpoch = await this.getTipEpoch();
@@ -148,6 +175,22 @@ export class TranfrClient {
     tx.addCellDeps(this.getCellDep());
 
     return tx;
+  }
+
+  /**
+   * A spend must carry the cell deps of a type script on the cell so it can
+   * run. They have to be added here, before signing, since the signature
+   * covers the cell deps and callers can't append them afterwards.
+   */
+  private addSpendCellDeps(tx: ccc.Transaction, cell: ccc.Cell, extraCellDeps: ccc.CellDepLike[] | undefined) {
+    tx.addCellDeps(this.getCellDep());
+    if (cell.cellOutput.type && !extraCellDeps?.length) {
+      throw new Error(
+        "This Tranfr cell has a type script; pass that script's cell deps via `cellDeps` " +
+          "so the transaction can run it",
+      );
+    }
+    if (extraCellDeps?.length) tx.addCellDeps(extraCellDeps);
   }
 
   /**
@@ -206,7 +249,7 @@ export class TranfrClient {
     );
 
     const recipientLockHash = newRecipientLock
-      ? ccc.Script.from(newRecipientLock).hash()
+      ? assertSecp256k1Lock(newRecipientLock, "recipient").hash()
       : currentArgs.recipientLockHash;
 
     const newArgs = encodeArgs({
@@ -217,10 +260,10 @@ export class TranfrClient {
 
     const tx = ccc.Transaction.from({
       inputs: [{ previousOutput: cell.outPoint, cellOutput: cell.cellOutput, outputData: cell.outputData }],
-      outputs: [{ lock: this.getScript(newArgs), capacity: cell.cellOutput.capacity }],
+      outputs: [{ lock: this.getScript(newArgs), type: cell.cellOutput.type, capacity: cell.cellOutput.capacity }],
       outputsData: [cell.outputData],
     });
-    tx.addCellDeps(this.getCellDep());
+    this.addSpendCellDeps(tx, cell, params.cellDeps);
 
     return this.finalizeSingleOutputSpend(tx, cell.cellOutput.lock, UnlockMode.OWNER, ownerPrivateKey, feeRate);
   }
@@ -238,10 +281,10 @@ export class TranfrClient {
 
     const tx = ccc.Transaction.from({
       inputs: [{ previousOutput: cell.outPoint, cellOutput: cell.cellOutput, outputData: cell.outputData }],
-      outputs: [{ lock: toLock, capacity: cell.cellOutput.capacity }],
-      outputsData: ["0x"],
+      outputs: [{ lock: toLock, type: cell.cellOutput.type, capacity: cell.cellOutput.capacity }],
+      outputsData: [cell.outputData],
     });
-    tx.addCellDeps(this.getCellDep());
+    this.addSpendCellDeps(tx, cell, params.cellDeps);
 
     return this.finalizeSingleOutputSpend(tx, cell.cellOutput.lock, UnlockMode.OWNER, ownerPrivateKey, feeRate);
   }
@@ -273,10 +316,10 @@ export class TranfrClient {
           since: args.deadlineSince,
         },
       ],
-      outputs: [{ lock: toLock, capacity: cell.cellOutput.capacity }],
-      outputsData: ["0x"],
+      outputs: [{ lock: toLock, type: cell.cellOutput.type, capacity: cell.cellOutput.capacity }],
+      outputsData: [cell.outputData],
     });
-    tx.addCellDeps(this.getCellDep());
+    this.addSpendCellDeps(tx, cell, params.cellDeps);
 
     return this.finalizeSingleOutputSpend(tx, cell.cellOutput.lock, UnlockMode.RECIPIENT, recipientPrivateKey, feeRate);
   }

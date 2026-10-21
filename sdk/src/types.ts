@@ -86,6 +86,9 @@ export interface RenewTranfrParams {
   newRecipientLock?: ccc.ScriptLike;
   /** Fee rate in shannons/KB. Defaults to DEFAULT_FEE_RATE. The fee is deducted from the renewed cell's own capacity. */
   feeRate?: ccc.NumLike;
+  /** Cell deps for the cell's type script, if it has one. Required in that case: they must be in the
+   * transaction before it is signed. */
+  cellDeps?: ccc.CellDepLike[];
 }
 
 /**
@@ -99,6 +102,9 @@ export interface ClaimTranfrParams {
   toLock?: ccc.ScriptLike;
   /** Fee rate in shannons/KB. Defaults to DEFAULT_FEE_RATE. The fee is deducted from the cell's own capacity. */
   feeRate?: ccc.NumLike;
+  /** Cell deps for the cell's type script, if it has one. Required in that case: they must be in the
+   * transaction before it is signed. */
+  cellDeps?: ccc.CellDepLike[];
 }
 
 /**
@@ -112,4 +118,7 @@ export interface ReclaimTranfrParams {
   toLock?: ccc.ScriptLike;
   /** Fee rate in shannons/KB. Defaults to DEFAULT_FEE_RATE. The fee is deducted from the cell's own capacity. */
   feeRate?: ccc.NumLike;
+  /** Cell deps for the cell's type script, if it has one. Required in that case: they must be in the
+   * transaction before it is signed. */
+  cellDeps?: ccc.CellDepLike[];
 }

@@ -89,24 +89,24 @@ CKB runs a lock once per group of inputs with identical lock scripts, args inclu
 
 The lock answers one question: "is this spend authorized?" Everything else about the transaction is up to whoever builds it.
 
-### 5.1 Owner and recipient must be standard secp256k1 keys (known SDK gap)
+### 5.1 Owner and recipient must be standard secp256k1 keys
 
 The lock only accepts signatures that resolve to a standard `secp256k1_blake160_sighash_all` lock (`docs/spec.md` §3.1). If a cell's args contain the hash of any other lock (JoyID, MetaMask or another Omnilock, multisig), that role can never sign:
 - unusable owner: nobody can renew or reclaim, and the recipient gets the funds after the deadline;
 - unusable recipient: the owner must reclaim or renew with a valid recipient;
 - both unusable: **the funds are locked permanently.**
 
-**The v1 SDK does not prevent this.** `createTranfr` and `renewTranfr` accept any lock script for the owner and recipient. In the demo, the "new recipient address" field accepts any address. Callers must pass standard secp256k1 addresses until the SDK validates this itself.
+The lock itself can't prevent this, because it never runs at creation (§5.3). The SDK does: `createTranfr` and `renewTranfr` reject any owner or recipient lock that isn't `secp256k1_blake160` (that code hash, `hash_type = type`, 20-byte args) before building anything (`assertSecp256k1Lock`). Transactions built without the SDK get no such check.
 
 For the same reason, the CCC wallet connectors (JoyID, MetaMask and other EIP-6963 wallets, UniSat, Xverse, OKX, UTXO Global, Rei, Nostr) can fund the creation of a Tranfr cell but cannot act as owner or recipient. The demo uses in-browser testnet keys for those roles.
 
-### 5.2 Type scripts and cell data (known SDK gap)
+### 5.2 Type scripts and cell data
 
-The lock ignores the cell's type script. The v1 SDK builders assume plain CKB cells:
-- `renewTranfr`, `buildOwnerReclaim` and `buildRecoveryClaim` create their output **without a type script**;
-- reclaim and claim also drop the cell's data (renew keeps it).
+The lock ignores the cell's type script, so keeping a typed asset (for example a UDT) intact is the transaction builder's job. A builder that dropped the type script would, depending on the asset's rules, destroy the asset.
 
-On a Tranfr cell holding a typed asset (for example a UDT), these builders would drop the type, and depending on the asset's rules that may destroy it. **Don't lock typed assets with the v1 SDK.**
+The SDK's `renewTranfr`, `buildOwnerReclaim` and `buildRecoveryClaim` copy the input's type script and data unchanged into their single output, changing only the lock. Running a type script needs its code as a cell dep, and the signature covers the cell deps, so they can't be added after the SDK signs. Callers pass them as `cellDeps`, and the SDK refuses to build a spend of a typed cell without them.
+
+Two limits remain. The SDK moves the whole cell as one unit: there's no splitting a UDT balance or merging cells. And `createTranfr` only creates plain CKB cells; wrapping an existing typed cell in Tranfr has to be built by hand.
 
 ### 5.3 Cell creation is unchecked
 
@@ -140,7 +140,7 @@ Nothing reminds the owner to renew or tells the recipient a cell is claimable. T
 
 - Single recipient only: no social or threshold recovery.
 - Owner and recipient must be standard secp256k1 keys (§5.1).
-- Plain CKB capacity only with the v1 SDK (§5.2).
+- The SDK creates only plain CKB cells, and moves typed cells whole (§5.2).
 - No protection against owner key theft (§1).
 - No off-chain notification (§6.4).
 - Testnet only, with an upgradeable deployment (§2.1).

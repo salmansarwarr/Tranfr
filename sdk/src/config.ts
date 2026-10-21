@@ -36,3 +36,11 @@ export const NOMINAL_HOURS_PER_EPOCH = 4.0;
  * matching ckb-cli's conventional minimum fee rate.
  */
 export const DEFAULT_FEE_RATE = 1000n;
+
+/**
+ * `secp256k1_blake160_sighash_all` code hash (`hash_type = type`, identical on
+ * mainnet and testnet). The lock only accepts owner/recipient signatures that
+ * resolve to this lock (docs/spec.md §3.1), so the SDK refuses any other.
+ */
+export const SECP256K1_BLAKE160_CODE_HASH: ccc.Hex =
+  "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8";
