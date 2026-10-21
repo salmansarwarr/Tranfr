@@ -21,7 +21,7 @@ import {
   packSince,
   recipientPathEligible,
   EPOCH_FRACTION_FLAG,
-} from "../../reference/since-cmp-ts/since_cmp.js";
+} from "./since-cmp.js";
 
 const SINCE_EPOCH_VALUE_MASK = 0x00ff_ffff_ffff_ffffn;
 
@@ -178,6 +178,26 @@ export class TranfrClient {
   }
 
   /**
+   * The cell's own period: its deadline minus the epoch of the block that
+   * committed it, rounded up, and never below the 90-day default. The args
+   * store only the deadline, so the period has to be recovered from the chain.
+   */
+  private async defaultRenewalEpochs(cell: ccc.Cell, deadline: ccc.Epoch): Promise<bigint> {
+    const committed = await this.client.getTransaction(cell.outPoint.txHash);
+    const header = committed?.blockHash ? await this.client.getHeaderByHash(committed.blockHash) : undefined;
+    if (!header) {
+      throw new Error(
+        "Can't find the block that committed this Tranfr cell to work out its period; pass newDurationEpochs explicitly",
+      );
+    }
+
+    const period = deadline.sub(header.epoch).normalizeCanonical();
+    const whole = BigInt(period.integer);
+    const periodEpochs = whole < 0n ? 0n : whole + (BigInt(period.numerator) > 0n ? 1n : 0n);
+    return periodEpochs > DEFAULT_DURATION_EPOCHS ? periodEpochs : DEFAULT_DURATION_EPOCHS;
+  }
+
+  /**
    * A spend must carry the cell deps of a type script on the cell so it can
    * run. They have to be added here, before signing, since the signature
    * covers the cell deps and callers can't append them afterwards.
@@ -235,12 +255,23 @@ export class TranfrClient {
    * there is no separate on-chain renewal transaction type.
    */
   public async renewTranfr(params: RenewTranfrParams): Promise<ccc.Transaction> {
-    const { cell, ownerPrivateKey, newDurationEpochs, newRecipientLock, feeRate } = params;
+    const { cell, ownerPrivateKey, newDurationEpochs, newRecipientLock, feeRate, allowEarlierDeadline } = params;
     const currentArgs = decodeArgs(cell.cellOutput.lock.args);
-    const durationEpochs = newDurationEpochs ?? DEFAULT_DURATION_EPOCHS;
+    const hasValidDeadline = currentArgs.deadlineSince >> 56n === EPOCH_FRACTION_FLAG;
+    const currentDeadline = ccc.Epoch.fromNum(currentArgs.deadlineSince & SINCE_EPOCH_VALUE_MASK).normalizeBase();
+
+    const durationEpochs =
+      newDurationEpochs ?? (hasValidDeadline ? await this.defaultRenewalEpochs(cell, currentDeadline) : DEFAULT_DURATION_EPOCHS);
 
     const tipEpoch = await this.getTipEpoch();
     const deadlineEpoch = tipEpoch.add({ integer: durationEpochs, numerator: 0n, denominator: 1n });
+    if (hasValidDeadline && deadlineEpoch.lt(currentDeadline) && !allowEarlierDeadline) {
+      throw new Error(
+        `Renewing for ${durationEpochs} epochs would move the deadline earlier ` +
+          `(from epoch ${currentDeadline.integer} to ${deadlineEpoch.integer}); ` +
+          "pass a longer newDurationEpochs, or set allowEarlierDeadline to shorten it deliberately",
+      );
+    }
     const deadlineSince = packSince(
       EPOCH_FRACTION_FLAG,
       BigInt(deadlineEpoch.integer),

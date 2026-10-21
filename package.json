@@ -2,22 +2,29 @@
   "name": "tranfr",
   "version": "1.0.0",
   "description": "Programmable recovery for CKB self-custody — a lock script that lets an owner keep full control of their assets while active, and lets a designated recovery recipient claim them if the owner goes inactive for a defined period. No custodian, no oracle, no protocol changes.",
-  "main": "./sdk/src/index.ts",
-  "types": "./sdk/src/index.ts",
+  "type": "module",
+  "main": "./sdk/dist/index.js",
+  "types": "./sdk/dist/index.d.ts",
   "exports": {
-    ".": "./sdk/src/index.ts"
+    ".": {
+      "types": "./sdk/dist/index.d.ts",
+      "import": "./sdk/dist/index.js"
+    }
   },
+  "files": [
+    "sdk/dist"
+  ],
   "directories": {
     "doc": "docs",
     "test": "tests"
   },
-  "type": "module",
   "scripts": {
     "build:contract": "make build CONTRACT=tranfr-lock",
     "test:contract": "cargo test",
-    "test:reference": "tsx --test reference/since-cmp-ts/since_cmp.test.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "prepare": "npm run build",
     "test:sdk": "tsx --test sdk/tests/*.test.ts",
-    "test:all": "cargo test && tsx --test reference/since-cmp-ts/since_cmp.test.ts && tsx --test sdk/tests/*.test.ts",
+    "test:all": "cargo test && tsx --test sdk/tests/*.test.ts",
     "typecheck": "tsc --noEmit",
     "generate-key": "tsx scripts/deploy.ts --generate-key",
     "deploy": "tsx scripts/deploy.ts"

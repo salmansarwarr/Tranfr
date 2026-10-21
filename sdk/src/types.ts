@@ -82,7 +82,14 @@ export interface RenewTranfrParams {
   cell: ccc.Cell;
   /** Private key matching the cell's owner_lock_hash, used to sign the OWNER-mode witness. */
   ownerPrivateKey: ccc.HexLike;
+  /**
+   * New period from now. Defaults to the cell's own period (deadline minus its
+   * creation epoch), never less than DEFAULT_DURATION_EPOCHS, so a heartbeat
+   * keeps a longer period instead of shortening it.
+   */
   newDurationEpochs?: bigint;
+  /** Allow a renewal whose new deadline is earlier than the current one. Off by default. */
+  allowEarlierDeadline?: boolean;
   newRecipientLock?: ccc.ScriptLike;
   /** Fee rate in shannons/KB. Defaults to DEFAULT_FEE_RATE. The fee is deducted from the renewed cell's own capacity. */
   feeRate?: ccc.NumLike;

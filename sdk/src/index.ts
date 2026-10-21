@@ -18,4 +18,4 @@ export {
   EPOCH_FRACTION_FLAG,
   RELATIVE_EPOCH_FRACTION_FLAG,
   ABSOLUTE_BLOCK_NUMBER_FLAG,
-} from "../../reference/since-cmp-ts/since_cmp.js";
+} from "./since-cmp.js";

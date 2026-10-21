@@ -126,7 +126,7 @@ Once the deadline passes, the owner path and recipient path are both valid, and 
 
 An owner-signed transaction has no expiry: it stays valid for as long as the cell it spends is unspent. Anyone who obtains a signed but unbroadcast renewal can broadcast it later, for example to push the deadline out just as the recipient is about to claim. Owners should broadcast what they sign and not leave signed transactions lying around.
 
-`renewTranfr` computes the new deadline from the chain tip when the transaction is built, not when it is committed.
+`renewTranfr` computes the new deadline from the chain tip when the transaction is built, not when it is committed. Without an explicit duration it renews for the cell's own period (its deadline minus the epoch of the block that created it), never less than the 90-day default, so a heartbeat can't silently shorten a longer period. A duration that would move the deadline earlier is refused unless the caller sets `allowEarlierDeadline`.
 
 ### 6.3 Epoch granularity and drift
 

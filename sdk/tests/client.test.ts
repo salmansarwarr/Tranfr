@@ -4,6 +4,7 @@ import * as ccc from "@ckb-ccc/core";
 import {
   TranfrClient,
   TRANFR_TESTNET_CONFIG,
+  DEFAULT_DURATION_EPOCHS,
   UnlockMode,
   decodeArgs,
   decodeWitnessLock,
@@ -40,7 +41,17 @@ class FakeClient {
   constructor(
     private readonly tipEpoch: ccc.EpochLike,
     private readonly cells: Map<string, ccc.Cell> = new Map(),
+    // Epoch of the block that committed every transaction; unset = not found on chain.
+    private readonly commitEpoch?: ccc.EpochLike,
   ) {}
+
+  async getTransaction() {
+    return this.commitEpoch === undefined ? undefined : { blockHash: `0x${"cc".repeat(32)}` };
+  }
+
+  async getHeaderByHash() {
+    return this.commitEpoch === undefined ? undefined : { epoch: ccc.Epoch.from(this.commitEpoch) };
+  }
 
   get addressPrefix() {
     return this.testnet.addressPrefix;
@@ -65,8 +76,8 @@ class FakeClient {
   }
 }
 
-function fakeClient(tipEpoch: ccc.EpochLike, cells?: Map<string, ccc.Cell>): ccc.Client {
-  return new FakeClient(tipEpoch, cells) as unknown as ccc.Client;
+function fakeClient(tipEpoch: ccc.EpochLike, cells?: Map<string, ccc.Cell>, commitEpoch?: ccc.EpochLike): ccc.Client {
+  return new FakeClient(tipEpoch, cells, commitEpoch) as unknown as ccc.Client;
 }
 
 async function secp256k1LockOf(privateKey: ccc.Hex): Promise<ccc.Script> {
@@ -184,7 +195,7 @@ test("renewTranfr recreates the cell with a new deadline and OWNER-mode witness"
     deadlineSince: oldDeadline,
   });
 
-  const client = new TranfrClient({ client: fakeClient([200n, 0n, 1n]) });
+  const client = new TranfrClient({ client: fakeClient([200n, 0n, 1n], undefined, [50n, 0n, 1n]) });
 
   const tx = await client.renewTranfr({
     cell,
@@ -216,7 +227,7 @@ test("renewTranfr can change the recipient", async () => {
     deadlineSince: oldDeadline,
   });
 
-  const client = new TranfrClient({ client: fakeClient([200n, 0n, 1n]) });
+  const client = new TranfrClient({ client: fakeClient([200n, 0n, 1n], undefined, [50n, 0n, 1n]) });
 
   const tx = await client.renewTranfr({
     cell,
@@ -322,7 +333,7 @@ test("renewTranfr refuses to deduct a fee that would leave the cell below its mi
     113_00000000n,
   );
   assert.equal(cell.cellOutput.capacity, 113_00000000n);
-  const client = new TranfrClient({ client: fakeClient([200n, 0n, 1n]) });
+  const client = new TranfrClient({ client: fakeClient([200n, 0n, 1n], undefined, [50n, 0n, 1n]) });
 
   await assert.rejects(
     () => client.renewTranfr({ cell, ownerPrivateKey: OWNER_PRIVATE_KEY }),
@@ -361,7 +372,7 @@ test("renewTranfr refuses a new recipient lock the script could never verify", a
     recipientLockHash: dummyLockHash(0x22),
     deadlineSince: packSince(EPOCH_FRACTION_FLAG, 100n, 0n, 1n),
   });
-  const client = new TranfrClient({ client: fakeClient([200n, 0n, 1n]) });
+  const client = new TranfrClient({ client: fakeClient([200n, 0n, 1n], undefined, [50n, 0n, 1n]) });
 
   for (const [label, badLock] of NON_SECP256K1_LOCKS) {
     await assert.rejects(
@@ -404,7 +415,7 @@ function assertKeepsTypeAndData(tx: ccc.Transaction) {
 
 test("renew, reclaim and claim keep a typed cell's type script and data", async () => {
   const cell = await buildTypedCell();
-  const client = new TranfrClient({ client: fakeClient([600n, 0n, 1n]) });
+  const client = new TranfrClient({ client: fakeClient([600n, 0n, 1n], undefined, [0n, 0n, 1n]) });
 
   assertKeepsTypeAndData(
     await client.renewTranfr({ cell, ownerPrivateKey: OWNER_PRIVATE_KEY, cellDeps: [UDT_CELL_DEP] }),
@@ -419,7 +430,7 @@ test("renew, reclaim and claim keep a typed cell's type script and data", async 
 
 test("spending a typed cell without its cell deps is refused before signing", async () => {
   const cell = await buildTypedCell();
-  const client = new TranfrClient({ client: fakeClient([600n, 0n, 1n]) });
+  const client = new TranfrClient({ client: fakeClient([600n, 0n, 1n], undefined, [0n, 0n, 1n]) });
   const missingDeps = /has a type script; pass that script's cell deps/;
 
   await assert.rejects(() => client.renewTranfr({ cell, ownerPrivateKey: OWNER_PRIVATE_KEY }), missingDeps);
@@ -428,4 +439,50 @@ test("spending a typed cell without its cell deps is refused before signing", as
     () => client.buildRecoveryClaim({ cell, recipientPrivateKey: RECIPIENT_PRIVATE_KEY }),
     missingDeps,
   );
+});
+
+async function renewedDeadline(
+  { deadline, tip, createdAt }: { deadline: bigint; tip: bigint; createdAt?: bigint },
+  extra: { newDurationEpochs?: bigint; allowEarlierDeadline?: boolean } = {},
+): Promise<bigint> {
+  const ownerScript = await secp256k1LockOf(OWNER_PRIVATE_KEY);
+  const cell = buildTranfrCell({
+    ownerLockHash: ownerScript.hash(),
+    recipientLockHash: dummyLockHash(0x22),
+    deadlineSince: packSince(EPOCH_FRACTION_FLAG, deadline, 0n, 1n),
+  });
+  const commitEpoch = createdAt === undefined ? undefined : ([createdAt, 0n, 1n] as ccc.EpochLike);
+  const client = new TranfrClient({ client: fakeClient([tip, 0n, 1n], undefined, commitEpoch) });
+  const tx = await client.renewTranfr({ cell, ownerPrivateKey: OWNER_PRIVATE_KEY, ...extra });
+  return decodeArgs(tx.outputs[0].lock.args).deadlineSince;
+}
+
+test("renewTranfr by default keeps a longer period instead of shortening it to 90 days", async () => {
+  // Created at epoch 100 with a 1080-epoch (~180 day) period; renewed at epoch 300.
+  const deadline = await renewedDeadline({ deadline: 1180n, tip: 300n, createdAt: 100n });
+  assert.equal(deadline, packSince(EPOCH_FRACTION_FLAG, 300n + 1080n, 0n, 1n));
+});
+
+test("renewTranfr by default never renews for less than the 90-day default", async () => {
+  // A 1-epoch demo cell renews for DEFAULT_DURATION_EPOCHS, not 1 epoch.
+  const deadline = await renewedDeadline({ deadline: 101n, tip: 101n, createdAt: 100n });
+  assert.equal(deadline, packSince(EPOCH_FRACTION_FLAG, 101n + DEFAULT_DURATION_EPOCHS, 0n, 1n));
+});
+
+test("renewTranfr refuses an explicit duration that would move the deadline earlier, unless allowed", async () => {
+  const cell = { deadline: 1180n, tip: 300n, createdAt: 100n };
+  await assert.rejects(() => renewedDeadline(cell, { newDurationEpochs: 540n }), /would move the deadline earlier/);
+
+  const deadline = await renewedDeadline(cell, { newDurationEpochs: 540n, allowEarlierDeadline: true });
+  assert.equal(deadline, packSince(EPOCH_FRACTION_FLAG, 300n + 540n, 0n, 1n));
+});
+
+test("renewTranfr without a duration fails clearly if the cell's creation block can't be found", async () => {
+  await assert.rejects(
+    () => renewedDeadline({ deadline: 1180n, tip: 300n }),
+    /pass newDurationEpochs explicitly/,
+  );
+  // An explicit duration doesn't need the creation block.
+  const deadline = await renewedDeadline({ deadline: 1180n, tip: 300n }, { newDurationEpochs: 1080n });
+  assert.equal(deadline, packSince(EPOCH_FRACTION_FLAG, 300n + 1080n, 0n, 1n));
 });

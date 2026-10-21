@@ -3,7 +3,7 @@
 Two independently-tested ports of the same verified algorithm, kept in sync by construction (the TS port is a direct translation of the already-tested Rust, not a separate re-derivation):
 
 - `since-cmp-rs/` — Rust, `#![no_std]`-clean, meant to be dropped into the Tranfr lock script crate as-is (step 5/7).
-- `since-cmp-ts/` — TypeScript, meant to back `isRecoveryEligible` and `getTranfrStatus` in the SDK (step 13/14).
+- TypeScript port: now lives in the SDK at `sdk/src/since-cmp.ts` (tests: `sdk/tests/since-cmp.test.ts`), so the published SDK package is self-contained. It backs `isRecoveryEligible` and `getTranfrStatus`.
 
 ## Provenance
 
@@ -25,12 +25,8 @@ Whether real CKB consensus ever actually produces an unnormalized `(0,0)` `since
 # Rust
 cd since-cmp-rs && cargo test
 
-# TypeScript (global ts-node is used here; NODE_PATH points node at the
-# global install so `-r ts-node/register` resolves without a local
-# package.json/node_modules — revisit once step 12 scaffolds the real SDK
-# package, which should carry its own devDependency instead of relying on
-# whatever happens to be installed globally on a given machine).
-cd since-cmp-ts && NODE_PATH=$(npm root -g) node -r ts-node/register --test since_cmp.test.ts
+# TypeScript (from the repo root; runs with the rest of the SDK tests)
+npm run test:sdk
 ```
 
 Both suites currently pass 11/11, covering the same cases in both languages: epoch-only ordering, equal-ratio/unequal-ratio same-epoch comparisons, the degenerate zero-length quirk (raw and normalized), flag-mismatch rejection, non-fraction-metric plain comparison, relative-flag rejection, and boundary-inclusive (`>=`) acceptance.

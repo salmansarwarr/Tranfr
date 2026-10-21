@@ -117,7 +117,7 @@ epoch_fraction_gte((E1, I1, L1), (E2, I2, L2)) =
 
 The `since` value is chosen by whoever builds the transaction, but consensus only admits a transaction into a block whose epoch is at or past every input's absolute `since`. Requiring `since ≥ deadline` therefore means the claim can't be committed before the chain actually reaches the deadline. The check runs against the chain at inclusion time, not at signing time.
 
-The comparison is implemented once in `reference/since-cmp-rs` (Rust, used by the contract) and once in `reference/since-cmp-ts` (TypeScript, used by the SDK). Both are ports of `epoch_number_with_fraction_cmp` and `check_since` from `nervosnetwork/ckb-system-scripts`, with the same test suite.
+The comparison is implemented once in `reference/since-cmp-rs` (Rust, used by the contract) and once in `sdk/src/since-cmp.ts` (TypeScript, used by the SDK). Both are ports of `epoch_number_with_fraction_cmp` and `check_since` from `nervosnetwork/ckb-system-scripts`, with the same test suite.
 
 ## 6. Transaction-level behaviour
 

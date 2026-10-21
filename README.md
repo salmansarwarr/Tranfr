@@ -41,7 +41,9 @@ Everything else is built from these two paths:
 
 - **Renew** (the "heartbeat"): the owner spends the cell and recreates it
   with a later deadline, optionally naming a new recipient. There's no
-  separate renewal mechanism; it's just an owner spend.
+  separate renewal mechanism; it's just an owner spend. By default the SDK
+  renews for the cell's own period (at least 90 days), so a heartbeat never
+  silently shortens a longer period.
 - **Reclaim**: the owner spends the cell anywhere, at any time.
 - **Claim**: once the deadline has passed, the recipient spends the cell.
 
@@ -109,8 +111,8 @@ produced on one machine only; an independent rebuild hasn't been done yet.
 ```
 contracts/tranfr-lock/   Lock script (Rust, ckb-std): args/witness parsing, both unlock paths
 tests/                   ckb-testtool integration and adversarial tests for the lock
-reference/               Shared since-comparison (Rust + TypeScript ports) and golden vectors
-sdk/                     TypeScript SDK on CCC: status, create, renew, reclaim, claim
+reference/               Rust since-comparison (used by the lock) and golden vectors
+sdk/                     TypeScript SDK on CCC (incl. the TS since-comparison); builds to sdk/dist
 demo/                    Testnet web UI (React + Vite) on top of the SDK
 scripts/                 Testnet deployment script
 docs/                    Spec, security model, deployment record, epoch-length data, plan
@@ -125,17 +127,17 @@ Requirements: Rust with the `riscv64imac-unknown-none-elf` target and clang
 npm install
 
 npm run test:contract    # 43 Rust tests: lock unit + integration, since-comparison
-npm run test:reference   # 11 TypeScript since-comparison tests
-npm run test:sdk         # 29 SDK tests
+npm run test:sdk         # 44 SDK tests, incl. the TypeScript since-comparison
+npm run build            # SDK -> sdk/dist (JS + .d.ts); the package entry points
 npm run typecheck
 
 npm run build:contract   # build/release/tranfr-lock
 ```
 
-The SDK (`sdk/src/index.ts`) exposes `TranfrClient`:
+The SDK package (`tranfr`, built to `sdk/dist`) exposes `TranfrClient`:
 
 ```ts
-import { TranfrClient } from "./sdk/src/index.js";
+import { TranfrClient } from "tranfr";
 
 const tranfr = new TranfrClient(); // CKB testnet by default
 

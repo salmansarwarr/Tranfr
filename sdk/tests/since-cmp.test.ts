@@ -8,7 +8,7 @@ import {
   EPOCH_FRACTION_FLAG,
   RELATIVE_EPOCH_FRACTION_FLAG,
   ABSOLUTE_BLOCK_NUMBER_FLAG,
-} from "./since_cmp.js";
+} from "../src/since-cmp.js";
 
 const SINCE_VALUE_MASK = 0x00ff_ffff_ffff_ffffn;
 const pack = (flags: bigint, epoch: bigint, index: bigint, length: bigint) =>

@@ -41,7 +41,8 @@ export function CellCard(props: CellCardProps) {
   const [loadError, setLoadError] = useState<string>();
   const [busy, setBusy] = useState<string>();
   const [actionError, setActionError] = useState<string>();
-  const [renewEpochs, setRenewEpochs] = useState(DEFAULT_DURATION_EPOCHS.toString());
+  const [renewEpochs, setRenewEpochs] = useState("");
+  const [allowEarlier, setAllowEarlier] = useState(false);
   const [newRecipient, setNewRecipient] = useState("");
   const [reclaimTo, setReclaimTo] = useState("");
   const [claimTo, setClaimTo] = useState("");
@@ -154,8 +155,19 @@ export function CellCard(props: CellCardProps) {
           <h4>Owner: renew</h4>
           <p className="muted">Recreates the cell with a fresh deadline. Optionally changes the recipient.</p>
           <label>
-            New delay (epochs)
-            <input type="number" min={1} step={1} value={renewEpochs} onChange={(e) => setRenewEpochs(e.target.value)} />
+            New delay (epochs, optional)
+            <input
+              type="number"
+              min={1}
+              step={1}
+              value={renewEpochs}
+              onChange={(e) => setRenewEpochs(e.target.value)}
+              placeholder={`Keep this cell's period (at least ${DEFAULT_DURATION_EPOCHS})`}
+            />
+          </label>
+          <label className="checkbox">
+            <input type="checkbox" checked={allowEarlier} onChange={(e) => setAllowEarlier(e.target.checked)} />
+            Allow moving the deadline earlier
           </label>
           <label>
             New recipient address (optional)
@@ -168,7 +180,7 @@ export function CellCard(props: CellCardProps) {
           )}
           <button
             type="button"
-            disabled={!isOwner || !!busy || !(Number.isInteger(Number(renewEpochs)) && Number(renewEpochs) >= 1)}
+            disabled={!isOwner || !!busy || !(renewEpochs.trim() === "" || (Number.isInteger(Number(renewEpochs)) && Number(renewEpochs) >= 1))}
             onClick={() =>
               run(
                 "Renew",
@@ -176,7 +188,8 @@ export function CellCard(props: CellCardProps) {
                   tranfr.renewTranfr({
                     cell: status.cell,
                     ownerPrivateKey: owner!.privateKey,
-                    newDurationEpochs: BigInt(Number(renewEpochs)),
+                    newDurationEpochs: renewEpochs.trim() ? BigInt(Number(renewEpochs)) : undefined,
+                    allowEarlierDeadline: allowEarlier,
                     newRecipientLock: newRecipient.trim() ? await scriptFromAddress(newRecipient) : undefined,
                   }),
                 onRenewed,

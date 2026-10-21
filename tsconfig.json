@@ -14,6 +14,6 @@
     "forceConsistentCasingInFileNames": true,
     "outDir": "./dist"
   },
-  "include": ["sdk/src/**/*", "sdk/tests/**/*", "reference/since-cmp-ts/**/*", "scripts/**/*"],
+  "include": ["sdk/src/**/*", "sdk/tests/**/*", "scripts/**/*"],
   "exclude": ["node_modules", "dist"]
 }
