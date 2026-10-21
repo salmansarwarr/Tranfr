@@ -1,144 +1,213 @@
 # Tranfr
 
-Programmable recovery for CKB self-custody — a lock script that lets an owner
+Programmable recovery for CKB self-custody: a lock script that lets an owner
 keep full control of their assets while active, and lets a designated
-recovery recipient claim them if the owner goes inactive for a defined
-period. No custodian, no oracle, no protocol changes.
+recovery recipient claim them if the owner goes inactive past a deadline.
+No custodian, no oracle, no protocol changes.
+
+**Status:** proof of concept, deployed on CKB testnet only. Not audited. Don't
+use it with real funds.
 
 ---
 
 ## The problem
 
-A CKB Cell's spending conditions answer to exactly one key. If that key is
-lost, destroyed, or its holder becomes unavailable, the funds are
-permanently unreachable — the Cell remains valid on-chain, but nobody can
-satisfy its lock. Existing options each trade something away:
+A CKB cell's spending conditions answer to its lock. With an ordinary
+single-key lock, if that key is lost or its holder becomes unavailable, the
+funds are unreachable for good: the cell stays valid on chain, but nobody can
+satisfy its lock. The existing options each trade something away:
 
-- **Multisig** — requires multiple parties for every normal operation
-- **Custodians** — introduce a trusted intermediary
-- **Manual inheritance** — relies on off-chain coordination
-- **Application-specific recovery** — isn't reusable elsewhere
-- **A plain single-key lock** — has no fallback at all
+- **Multisig**: needs several parties for every normal operation
+- **Custodians**: add a trusted intermediary
+- **Manual inheritance**: relies on off-chain coordination
+- **Application-specific recovery**: isn't reusable elsewhere
+- **A plain single-key lock**: has no fallback at all
 
-Tranfr uses CKB's Cell Model and `since` timelock primitive to add a
-recovery path without any of the above tradeoffs.
+Tranfr adds a recovery path using CKB's cell model and its `since` timelock,
+without any of those tradeoffs.
 
 ## How it works
 
-A Tranfr commits to an **owner**, a **recovery recipient**, and a fixed
-**inactivity period**. While active, the owner can:
+A Tranfr cell is locked by one small lock script whose args name an
+**owner**, a **recipient**, and a **deadline** (an absolute epoch). The lock
+has two independent ways to unlock:
 
-- send a **heartbeat** to reset the inactivity timer, or
-- issue a **policy update** to change the recovery recipient (which also
-  resets the timer)
+| Path | Who signs | When it's valid |
+|---|---|---|
+| **Owner** | Owner key | Always, with no time check at all |
+| **Recipient** | Recipient key | Only once the chain has reached the deadline |
 
-If neither happens before the deadline, the owner path freezes and the
-**recovery recipient** becomes able to claim the funds, provided both their
-signature and the expired timelock are satisfied.
+Everything else is built from these two paths:
 
-### Corrected owner-op state machine
+- **Renew** (the "heartbeat"): the owner spends the cell and recreates it
+  with a later deadline, optionally naming a new recipient. There's no
+  separate renewal mechanism; it's just an owner spend.
+- **Reclaim**: the owner spends the cell anywhere, at any time.
+- **Claim**: once the deadline has passed, the recipient spends the cell.
 
-Earlier design iterations used a single-step, caller-selected `header_dep`
-to decide whether an owner operation landed before or after the deadline.
-Community review identified a race condition: a heartbeat or policy update
-**signed** before the deadline but **broadcast** after it could not be
-reliably rejected, because `since` only enforces a lower bound on validity,
-not an upper one.
+The recipient's transaction must declare a `since` value at or past the
+deadline. CKB consensus won't include a transaction in a block until the
+chain reaches every input's `since`, so the recipient can't claim early,
+however the transaction is signed.
 
-Tranfr v1 closes this with a two-phase commit:
+### Why the owner path has no time limit
 
-```
-ACTIVE
-  -> owner-signed BEGIN_OWNER_OP
-       -> PENDING_OWNER_OP
-            -> NORMALIZE -> ACTIVE
-            -> RECOVER   -> CLAIMED
-```
+Earlier versions of this design tried to stop the owner from acting after
+the deadline. Community review (thanks, Tianji) showed that this can't be
+enforced simply. CKB's `since` only expresses a lower bound ("not before X"),
+so an owner transaction signed before the deadline but broadcast after it
+couldn't be reliably rejected. Closing that gap needed a multi-step
+`BEGIN_OWNER_OP` / `PENDING_OWNER_OP` state machine with header dependencies.
 
-`BEGIN_OWNER_OP` only commits to the requested operation (heartbeat or
-recipient update) — it does not apply it. When `PENDING_OWNER_OP` is later
-consumed, the lock script resolves the **actual commitment block** of that
-input Cell via `ckb_load_header(..., input_index, CKB_SOURCE_INPUT)`, not an
-arbitrary header chosen by the transaction builder:
+v1 removes the requirement instead. The owner can always act, so there's no
+"before the deadline" condition to race against. The recipient path needs
+only a lower bound, which `since` enforces against the real chain at
+inclusion time. The trade-off is deliberate: after the deadline, owner and
+recipient can both spend, and whoever's transaction lands first wins. An
+active owner always keeps control; recovery is for owners who stop acting.
 
-```
-begin_epoch  = epoch of the block that committed PENDING_OWNER_OP
-old_deadline = previous_deadline_epoch
-timely       = epoch_less(begin_epoch, old_deadline)
-```
+Full rules: [`docs/spec.md`](docs/spec.md). Reasoning, trust assumptions and
+limits: [`docs/security-model.md`](docs/security-model.md).
 
-If `timely`, the operation applies and a new deadline is derived from
-`begin_epoch`. If not, the operation has **no effect** — the previous
-recovery recipient and deadline remain authoritative, and the pending Cell
-remains recoverable so no value can get stuck.
+## Important limitations
 
-This makes owner authority depend on **when the state transition entered
-the canonical chain**, not on when it was signed or which header the owner
-chose to reference.
+- **The testnet deployment is upgradeable.** It uses Type ID, so whoever
+  holds the deployer key can replace the script for every Tranfr cell. This
+  must not carry over to a mainnet deployment.
+- **Owner and recipient must be standard CKB secp256k1 keys** (default-lock
+  addresses). The lock can't verify JoyID, MetaMask/Omnilock, multisig or
+  other signers, so a connected CCC wallet can fund a Tranfr cell but can't
+  act as its owner or recipient. The SDK refuses other lock types.
+- **It doesn't protect against a stolen owner key.** The owner path is
+  unconditional, so a thief with the owner key has full control. Tranfr
+  covers inactivity and key loss, not theft.
+- **Single recipient only.** No social or threshold recovery.
+- **Epoch-based deadlines.** An epoch is roughly 4 hours and drifts with
+  difficulty; 540 epochs measured at about 90 days. Wall-clock estimates are
+  approximate.
+- **No off-chain notification.** Nothing reminds the owner to renew.
+- **The SDK only creates plain CKB cells.** It keeps a typed cell's type
+  script and data when spending, but moves the whole cell as one unit.
+- **Not audited.**
 
-## Known limitations
+## Testnet deployment
 
-- **v1 covers heartbeat and recipient-update only.** The same commit-bound
-  race condition applies to ordinary spending (a spend signed before the
-  deadline but broadcast after it), which requires an analogous
-  `BEGIN_SPEND → PENDING_SPEND → SETTLE_SPEND/RECOVER` construction. That
-  fix is planned for a future release, not this one.
-- **Single recipient only.** Social or threshold multi-party recovery is
-  out of scope for v1.
-- **No off-chain notification.** The entire security boundary is the lock
-  script itself; there is no off-chain component to reason about.
-- **Not audited.** This is a proof-of-concept implementation. Do not use
-  with real funds without an independent security audit.
+| Field | Value |
+|---|---|
+| Network | CKB Testnet (Pudge) |
+| `code_hash` | `0xffc6b1c122037a97c18878f583ab789ea7f6cf3a1febc1e02e4fd9f36c442bfd` |
+| `hash_type` | `type` (Type ID) |
+| Cell dep | [`0x0d0eb86d886c4c0f0981489498c68aba8bc914a946bbbf11ceec8c13ce442c08`](https://pudge.explorer.nervos.org/transaction/0x0d0eb86d886c4c0f0981489498c68aba8bc914a946bbbf11ceec8c13ce442c08) index `0`, `dep_type = code` |
+| Binary data hash | `0x24a5f576896042fa4583b9536189edfd21731c3d82f29ba28395a8145d77da3d` |
+
+Build and deploy steps for reproducing these hashes are in
+[`docs/deployment.md`](docs/deployment.md). The build hash has so far been
+produced on one machine only; an independent rebuild hasn't been done yet.
 
 ## Repository structure
 
 ```
-/contracts        Lock script (CKB-VM), owner-op and recovery paths
-/tests            Adversarial and epoch-boundary test suite
-/demo             Minimal testnet UI exercising the full v1 lifecycle
-/docs             Protocol spec, security model, threat model, test vectors
+contracts/tranfr-lock/   Lock script (Rust, ckb-std): args/witness parsing, both unlock paths
+tests/                   ckb-testtool integration and adversarial tests for the lock
+reference/               Shared since-comparison (Rust + TypeScript ports) and golden vectors
+sdk/                     TypeScript SDK on CCC: status, create, renew, reclaim, claim
+demo/                    Testnet web UI (React + Vite) on top of the SDK
+scripts/                 Testnet deployment script
+docs/                    Spec, security model, deployment record, epoch-length data, plan
 ```
+
+## Using it
+
+Requirements: Rust with the `riscv64imac-unknown-none-elf` target and clang
+≥ 14 (for building the contract), and Node.js 18+.
+
+```bash
+npm install
+
+npm run test:contract    # 43 Rust tests: lock unit + integration, since-comparison
+npm run test:reference   # 11 TypeScript since-comparison tests
+npm run test:sdk         # 29 SDK tests
+npm run typecheck
+
+npm run build:contract   # build/release/tranfr-lock
+```
+
+The SDK (`sdk/src/index.ts`) exposes `TranfrClient`:
+
+```ts
+import { TranfrClient } from "./sdk/src/index.js";
+
+const tranfr = new TranfrClient(); // CKB testnet by default
+
+// Create: returns an unfunded transaction; fund, sign and send it with any CCC signer.
+const tx = await tranfr.createTranfr({ ownerLock, recipientLock, capacity, durationEpochs: 540n });
+await tx.completeInputsByCapacity(signer);
+await tx.completeFeeBy(signer);
+await signer.sendTransaction(tx);
+
+// Status, renew, reclaim, claim. The spends come back signed; the fee is paid from the cell.
+const status = await tranfr.getTranfrStatus(outPoint);
+const renew = await tranfr.renewTranfr({ cell: status.cell, ownerPrivateKey });
+const reclaim = await tranfr.buildOwnerReclaim({ cell: status.cell, ownerPrivateKey });
+const claim = await tranfr.buildRecoveryClaim({ cell: status.cell, recipientPrivateKey }); // throws before the deadline
+await tranfr.client.sendTransaction(claim);
+```
+
+Demo:
+
+```bash
+cd demo && npm install && npm run dev
+```
+
+The demo stores the owner and recipient test keys unencrypted in the
+browser, so use testnet keys only.
 
 ## Test coverage
 
-The test suite validates, at minimum:
+- **Lock script:** the owner path succeeds before, at and after the deadline,
+  with any `since`, and even with a malformed deadline. The recipient path
+  succeeds exactly at the deadline and is rejected one step before it. Ratio
+  edge cases are covered (equal ratios with different denominators, 16-bit
+  maximum denominators, epoch 0, the maximum epoch). The recipient path
+  rejects degenerate `(0, 0)` fractions, relative or other-metric `since`,
+  early inputs hidden in a multi-input group, mode-byte swaps, wrong signers,
+  tampered and malformed signatures and witnesses, and signature replay.
+  All tests use real secp256k1 signatures under `ckb-testtool`.
+- **Shared comparison:** one test suite run against both the Rust and
+  TypeScript ports, plus byte-for-byte golden vectors for the args and
+  witness encodings.
+- **SDK:** eligibility boundaries, status decoding, deadline arithmetic,
+  signer-key recovery from every produced signature, minimum-capacity and
+  lock-type guards, and type-script preservation.
 
-- A pre-signed, withheld heartbeat/policy-update has no effect once the
-  deadline passes, regardless of when it was signed
-- An arbitrary stale header cannot substitute for the header associated
-  with the actual pending input Cell
-- Late `NORMALIZE` attempts are rejected; the pending Cell remains
-  recoverable
-- Replay of the same operation against a later Tranfr state fails
-  (state hash / nonce binding)
-- Epoch-fraction boundary comparisons match identically between the SDK
-  and the lock script
-- Recovery cannot execute before the derived effective deadline, and is
-  valid once it has passed
+**Not yet verified:** SDK-built transactions submitted to testnet or run in
+`ckb-debugger` (the SDK tests use a fake RPC client), a manual end-to-end run
+of the demo against testnet, an independent rebuild of the deployed binary,
+and an external audit.
 
-See `/docs/test-vectors.md` for the full list.
+## Roadmap
 
-## Status & roadmap
-
-| Phase | Scope |
+| Status | Item |
 |---|---|
-| 1 — Protocol validation | State machine, threat model, feasibility of the commit-bound expiry mechanism |
-| 2 — Lock script | `BEGIN_OWNER_OP` / `PENDING_OWNER_OP` / `NORMALIZE` / `RECOVER`, full test suite |
-| 3 — Testnet demo | Minimal UI: create, heartbeat, recipient update, expiry, recovery |
-| 4 (future) | `BEGIN_SPEND` / `PENDING_SPEND` / `SETTLE_SPEND` construction for ordinary spending |
-| 5 (future) | SDK, production hardening, external audit |
+| Done | Lock script, adversarial test suite, testnet deployment |
+| Done | TypeScript SDK and testnet demo |
+| Done | Specification and security model |
+| Next | End-to-end testnet verification of the SDK and demo |
+| Before mainnet | Immutable deployment (`data1`, or a locked Type ID cell), independent build reproduction, external audit |
+| Future | Multi-recipient/threshold recovery; support for other signer types |
 
 ## References
 
-- [CKB RFC 0022 — Transaction Structure / Header Deps](https://github.com/nervosnetwork/rfcs)
-- [CKB RFC 0017 — Transaction Since Precondition](https://github.com/nervosnetwork/rfcs)
-- CKB Open Transaction / CoBuild Protocol Overview
+- [CKB RFC 0017: Transaction valid since](https://github.com/nervosnetwork/rfcs), the `since` encoding and epoch-with-fraction semantics
+- [`nervosnetwork/ckb-system-scripts`](https://github.com/nervosnetwork/ckb-system-scripts): `secp256k1_blake160_sighash_all.c` and `check_since`, which the signature and `since` logic port
+- [`ckb-devrel/ccc`](https://github.com/ckb-devrel/ccc): the SDK foundation and wallet connector
+- [`nervosnetwork/ckb-script-templates`](https://github.com/nervosnetwork/ckb-script-templates): contract scaffold
 
 ## License
 
-MIT (or specify — TBD)
+TBD.
 
 ## Acknowledgements
 
 Thanks to community reviewer Tianji for identifying the commit-bound expiry
-race condition addressed in this design.
+race in the earlier design, which led to v1's unconditional owner path.
