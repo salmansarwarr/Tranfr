@@ -1,6 +1,7 @@
 /build
-/target
+target/
 /tests/failed_txs
 /Cargo.lock
 node_modules
 /demo/dist
+/sdk/dist
