@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "e2e": "NODE_OPTIONS='--loader tsx/esm --no-warnings' playwright test"
   },
   "dependencies": {
     "@ckb-ccc/connector-react": "2.2.2",
@@ -16,6 +17,9 @@
     "react-dom": "18.3.1"
   },
   "devDependencies": {
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0",
+    "@playwright/test": "1.61.1",
     "@types/react": "18.3.12",
     "@types/react-dom": "18.3.1",
     "@vitejs/plugin-react": "4.3.4",

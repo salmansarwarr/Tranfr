@@ -188,9 +188,13 @@ recipient claim after the deadline paid to the recipient) was run with
 SDK-built transactions. Every transaction hash is in
 [`docs/testnet-evidence.md`](docs/testnet-evidence.md).
 
-**Not yet verified:** a click-through of the demo UI with a real wallet
-connector (the testnet run used the same SDK calls from a script), an
-independent rebuild of the deployed binary, and an external audit.
+The demo UI was also clicked through on testnet with Playwright
+(`demo/e2e/`): keys generated in the UI, a wallet connected through the CCC
+connector, then create, renew, reclaim and claim, with screenshots.
+
+**Not yet verified:** a real wallet (JoyID, MetaMask) behind the connector (the
+Playwright run used an injected EIP-6963 test wallet), an independent rebuild
+of the deployed binary, and an external audit.
 
 ## Roadmap
 
@@ -200,7 +204,8 @@ independent rebuild of the deployed binary, and an external audit.
 | Done | TypeScript SDK and testnet demo |
 | Done | Specification and security model |
 | Done | Full lifecycle on testnet with SDK-built transactions ([evidence](docs/testnet-evidence.md)) |
-| Next | Demo UI click-through with a real wallet connector |
+| Done | Demo UI click-through on testnet (Playwright, EIP-6963 test wallet) |
+| Next | Try the demo with a real wallet (JoyID, MetaMask) |
 | Before mainnet | Immutable deployment (`data1`, or a locked Type ID cell), independent build reproduction, external audit |
 | Future | Multi-recipient/threshold recovery; support for other signer types |
 

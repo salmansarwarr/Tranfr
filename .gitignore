@@ -5,3 +5,5 @@ target/
 node_modules
 /demo/dist
 /sdk/dist
+/demo/test-results
+/demo/playwright-report

@@ -66,11 +66,68 @@ holds 399.99999288 CKB (B and C returned) and the recipient's 199.99999236 CKB
 
 ## Not covered by this run
 
-- The demo UI itself was not clicked through. The script exercises the same SDK
-  calls, but the wallet-connector funding flow (JoyID, MetaMask, …) was stood in
-  for by a private-key signer.
+- This script run didn't use the demo UI or a wallet connector; see the
+  click-through below, which does.
 - The deadlines were 1 epoch, not the 540-epoch (~90 day) default.
 - The claim was included about half an epoch after its deadline (block epoch
   14049+518/1800 vs deadline 14048+719/900), because the run polled for
   eligibility before sending, so this doesn't pin down the earliest possible
   inclusion block.
+
+## Demo click-through (Playwright)
+
+The same lifecycle was then driven through the demo UI itself with Playwright
+(`demo/e2e/lifecycle.spec.ts`, run with `npm run e2e` in `demo/`), headless
+Chromium, on 2026-10-22. Every click is in the real demo: **Generate key**,
+**Connect wallet**, the **Create** form with **Use 1**, **Renew**, **Reclaim**,
+**Claim**. Transaction hashes were read from the demo's own Activity panel.
+
+**Wallet.** A real browser wallet can't be driven headless (JoyID needs a
+passkey; MetaMask is an extension needing a seed). The spec injects a test
+wallet that speaks the same protocol: it announces itself over EIP-6963 and
+answers `eth_requestAccounts`, `eth_accounts` and `personal_sign`, the only
+calls CCC's EIP-6963 signer makes, with signing done in Node with a fresh key.
+The demo's real CCC connector listed it alongside JoyID, MetaMask, OKX and
+UniSat, and CCC's real EVM/Omnilock signer paid for the three cells. Funding the
+test wallet's address was setup, standing in for the faucet.
+
+| Role | Address |
+|---|---|
+| Test wallet (Omnilock, EVM auth) | `ckt1qrejnmlar3r452tcg57gvq8patctcgy8acync0hxfnyka35ywafvkqgjdw8hgd60hzzjde9twkg0rjswwwwumhvtqqhtv528` |
+| Owner (generated in the UI) | `ckt1qzda0cr08m85hc8jlnfp3zer7xulejywt49kt2rr0vthywaa50xwsqgf7gzj4eacwdsda2nljesrwmyu5zsjdpgxxdde7` |
+| Recipient (generated in the UI) | `ckt1qzda0cr08m85hc8jlnfp3zer7xulejywt49kt2rr0vthywaa50xwsqvchaztztdawyp9wfjktgphw2fpujz6rtqgm20um` |
+
+| # | UI action | Transaction | Result |
+|---|---|---|---|
+| 0 | Fund the test wallet (setup) | [`0x4e34c99f…6379`](https://pudge.explorer.nervos.org/transaction/0x4e34c99fe2b41453153635d56788e5e161352882bb58202d6940a36fbe096379) | 1,000 CKB to the wallet |
+| 1 | Create A (Create form, wallet pays) | [`0x2c4e966c…861d`](https://pudge.explorer.nervos.org/transaction/0x2c4e966c92054c92e92a8c01222627c1d34d63fa92fa4bfa522e18540931861d) | 200 CKB, 1-epoch deadline |
+| 2 | Create B | [`0x5a78756d…5c3c`](https://pudge.explorer.nervos.org/transaction/0x5a78756d8ea3f9af5b0bab37bd040686fa04c94b60441ff575a0ba9797aa5c3c) | 200 CKB, deadline 14050+323/600 |
+| 3 | Create C | [`0x4c257f4b…d797`](https://pudge.explorer.nervos.org/transaction/0x4c257f4bfed168a0ae42163e2b618f6af32070718ecb835e89dea24f67fad797) | 200 CKB |
+| 4 | Claim button on A before the deadline | — | **Disabled** (recipient key loaded, not yet claimable) |
+| 5 | **Renew** A | [`0x5ae9b24c…d53d`](https://pudge.explorer.nervos.org/transaction/0x5ae9b24c3a8640035094c3cdb017a1e1e9c72a48742f977b6f719d3e47ecd53d) | New deadline 14050+122/225 |
+| 6 | **Reclaim** C before its deadline | [`0xc231442c…24dd`](https://pudge.explorer.nervos.org/transaction/0xc231442c4e86754aa4becdb8e03a954142832a15ae265181eefef08f51f524dd) | Paid back to the owner |
+| 7 | After the deadlines: A and B show **Recipient can claim**, Claim enabled | — | App's own status, chain epoch 14053+1273/1800 |
+| 8 | **Claim** A (recipient) | [`0x23b66b79…79bb`](https://pudge.explorer.nervos.org/transaction/0x23b66b79b27b243ffef2f7e0112aa70fa2da051ba8cdd03f00be8d37f02f79bb) | **199.99999236 CKB to the recipient** (re-checked from the chain by the spec) |
+| 9 | **Reclaim** B after its deadline (owner) | [`0xd058f424…c29c`](https://pudge.explorer.nervos.org/transaction/0xd058f424bd5862967f1db22ec8453c954f2a117c7dd46705c254710a6be6c29c) | Paid back to the owner |
+| 10 | Spent cells | — | A and B leave the list; C's card shows "No live Tranfr cell … already spent" |
+
+Screenshots (owner/recipient private keys stay masked):
+
+- [Three cells with live countdowns, Claim disabled](testnet-evidence/demo-01-three-cells.png)
+- [After the deadlines: Recipient can claim](testnet-evidence/demo-02-claimable.png)
+- [After Claim and Reclaim](testnet-evidence/demo-03-done.png)
+
+**Stranded test funds.** A first attempt failed after creating three cells,
+because a locator matched the wrong button ("Claim" also matches "Reclaim").
+That version of the spec only saved the browser storage, which held the
+generated owner and recipient keys, at the end. So those keys were lost, and
+these three 200 CKB testnet cells can never be spent:
+[`0xbae7f954…00c5`](https://pudge.explorer.nervos.org/transaction/0xbae7f954e91cb5d5ae12022203ff9b296bb2d04bd6fd164d64e740d925f000c5),
+[`0xdfd65967…ee8b`](https://pudge.explorer.nervos.org/transaction/0xdfd65967ebaaf0e4b9b25989b416d41ed7364ffb5aadd7b99b3026192309ee8b),
+[`0xf194c0cf…0780`](https://pudge.explorer.nervos.org/transaction/0xf194c0cf6ac6974bfb87c7dc23784757e7d5217d4aeb4c843b025325a7aa0780).
+The spec now saves storage straight after generating keys and after every step.
+That's the same loss a real user of the demo would face if they lost their
+browser storage, which is what the demo's "testnet only" warning is about.
+
+Still not covered: a real wallet (JoyID passkey, MetaMask extension). The
+connector and CCC's signer are real; the wallet behind them is a test stand-in.

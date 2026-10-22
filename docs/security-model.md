@@ -156,7 +156,9 @@ Nothing reminds the owner to renew or tells the recipient a cell is claimable. T
 
 - Testnet: the full lifecycle with SDK-built transactions (`docs/testnet-evidence.md`). That includes a recipient claim the node itself rejected as `Immature` before the deadline, and one after the deadline that paid the recipient.
 
+- Demo UI: a Playwright click-through on testnet through the real CCC connector, using an injected EIP-6963 test wallet (`docs/testnet-evidence.md`).
+
 **Not yet done:**
-- A click-through of the demo UI with a real wallet connector. The testnet run used the same SDK calls from a script.
+- The demo with a real wallet (JoyID, MetaMask) behind the connector.
 - An independent rebuild confirming the deployed binary hash (`docs/deployment.md` records a single-machine build).
 - An independent security audit.
