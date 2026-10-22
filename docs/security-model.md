@@ -154,8 +154,9 @@ Nothing reminds the owner to renew or tells the recipient a cell is claimable. T
 - Codecs: golden vectors checked byte-for-byte in both languages.
 - SDK: unit tests against a fake RPC client, including recovery of the signer's public key from each produced signature.
 
+- Testnet: the full lifecycle with SDK-built transactions (`docs/testnet-evidence.md`). That includes a recipient claim the node itself rejected as `Immature` before the deadline, and one after the deadline that paid the recipient.
+
 **Not yet done:**
-- Submitting SDK-built transactions to testnet or running them in `ckb-debugger`. The SDK tests never touch the chain.
-- A manual run of the demo against testnet: create, renew, countdown, claim, and owner reclaim after the deadline.
+- A click-through of the demo UI with a real wallet connector. The testnet run used the same SDK calls from a script.
 - An independent rebuild confirming the deployed binary hash (`docs/deployment.md` records a single-machine build).
 - An independent security audit.

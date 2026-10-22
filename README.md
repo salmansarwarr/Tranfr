@@ -182,10 +182,15 @@ browser, so use testnet keys only.
   signer-key recovery from every produced signature, minimum-capacity and
   lock-type guards, and type-script preservation.
 
-**Not yet verified:** SDK-built transactions submitted to testnet or run in
-`ckb-debugger` (the SDK tests use a fake RPC client), a manual end-to-end run
-of the demo against testnet, an independent rebuild of the deployed binary,
-and an external audit.
+**On testnet:** the full lifecycle (create, extend, owner reclaim before and
+after the deadline, a recipient claim refused early by the node itself, and a
+recipient claim after the deadline paid to the recipient) was run with
+SDK-built transactions. Every transaction hash is in
+[`docs/testnet-evidence.md`](docs/testnet-evidence.md).
+
+**Not yet verified:** a click-through of the demo UI with a real wallet
+connector (the testnet run used the same SDK calls from a script), an
+independent rebuild of the deployed binary, and an external audit.
 
 ## Roadmap
 
@@ -194,7 +199,8 @@ and an external audit.
 | Done | Lock script, adversarial test suite, testnet deployment |
 | Done | TypeScript SDK and testnet demo |
 | Done | Specification and security model |
-| Next | End-to-end testnet verification of the SDK and demo |
+| Done | Full lifecycle on testnet with SDK-built transactions ([evidence](docs/testnet-evidence.md)) |
+| Next | Demo UI click-through with a real wallet connector |
 | Before mainnet | Immutable deployment (`data1`, or a locked Type ID cell), independent build reproduction, external audit |
 | Future | Multi-recipient/threshold recovery; support for other signer types |
 
@@ -207,7 +213,7 @@ and an external audit.
 
 ## License
 
-TBD.
+[ISC](LICENSE).
 
 ## Acknowledgements
 
