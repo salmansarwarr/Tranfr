@@ -321,3 +321,7 @@ label.checkbox {
   align-items: center;
   gap: 6px;
 }
+
+.selectable {
+  user-select: all;
+}

@@ -22,6 +22,22 @@ export function CreatePanel({ owner, recipient, onCreated, onLog }: CreatePanelP
   const [duration, setDuration] = useState(DEFAULT_DURATION_EPOCHS.toString());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+
+  useEffect(() => {
+    if (copyState !== "copied") return;
+    const timer = setTimeout(() => setCopyState("idle"), 2000);
+    return () => clearTimeout(timer);
+  }, [copyState]);
+
+  async function copyAddress(address: string) {
+    try {
+      await navigator.clipboard.writeText(address);
+      setCopyState("copied");
+    } catch {
+      setCopyState("failed");
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -90,6 +106,11 @@ export function CreatePanel({ owner, recipient, onCreated, onLog }: CreatePanelP
             <span className="mono" title={walletAddress}>
               {walletAddress ? shortHex(walletAddress, 10) : "…"}
             </span>
+            {walletAddress && (
+              <button type="button" className="secondary" onClick={() => copyAddress(walletAddress)}>
+                {copyState === "copied" ? "Copied" : "Copy address"}
+              </button>
+            )}
             {walletBalance !== undefined && <span>{ccc.fixedPointToString(walletBalance)} CKB</span>}
             <button type="button" className="secondary" onClick={disconnect}>
               Disconnect
@@ -101,6 +122,12 @@ export function CreatePanel({ owner, recipient, onCreated, onLog }: CreatePanelP
           </button>
         )}
       </div>
+      {wallet && walletAddress && copyState === "failed" && (
+        <p className="muted">
+          Couldn&rsquo;t copy automatically. Select the address and copy it:{" "}
+          <span className="mono wrap selectable">{walletAddress}</span>
+        </p>
+      )}
 
       <div className="grid-2">
         <label>
